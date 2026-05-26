@@ -1,4 +1,4 @@
-from fastapi import FastAPI,HTTPException
+from fastapi import FastAPI,HTTPException,UploadFile
 from src.rag.DocumentsLoader import DocLoader
 from pydantic import BaseModel,Field
 from typing import Annotated,Literal
@@ -69,10 +69,9 @@ class UserDetails(BaseModel):
 
 @app.post("/chat")
 async def post_chat_response(req:UserDetails):
-    global chat
+    global chatbot
     try:
-        chat = await base_chatbot()
-        response = await chat.ainvoke({
+        response = await chatbot.ainvoke({
             "messages":[HumanMessage(content=req.message)],
             "system_messages": [],
             "summary": {
@@ -97,8 +96,7 @@ async def post_chat_response(req:UserDetails):
 @app.get("/chat/history")
 async def get_history_messages(thread_id:str):
     try:
-        chat = await base_chatbot()
-        state = await chat.aget_state(config={"configurable":{"thread_id":thread_id}})
+        state = await chatbot.aget_state(config={"configurable":{"thread_id":thread_id}})
         messages =  state.values.get("messages",[])
         returnable_messages = []
         for msg in messages:
