@@ -4,6 +4,7 @@ FROM python:3.11
 WORKDIR /app
 
 # Install uv (fast package manager)
+
 RUN pip install --no-cache-dir uv
 
 # Copy dependency files first (for caching layers)

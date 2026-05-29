@@ -1,11 +1,6 @@
 {
-  "Expense_Tracker": {
-    "command": "uv",
-    "args": [
-      "run",
-      "D:/MCPs/mcp_servers/expense_tracker.py"
-    ],
-    "cwd": "D:/MCPs",
-    "transport": "stdio"
+  "expense_tracker":{
+    "url": "http://localhost:8009/mcp",
+    "transport": "http"
   }
 }

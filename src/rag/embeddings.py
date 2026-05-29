@@ -1,1 +1,0 @@
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
