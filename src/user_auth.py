@@ -1,8 +1,11 @@
 import sqlite3
-import re
+import psycopg
+import re,os
 from src.encrypt import PasswordEncoder,ComparePasswords
 from textwrap import dedent
-
+from dotenv import load_dotenv
+load_dotenv()
+DB_PATH = os.getenv('DB_POSTGRES_URL')
 
 
 
@@ -10,21 +13,6 @@ from textwrap import dedent
 
 
 #------------------------ Create Table -------------------------------
-
-def create_accounts_info_table(db_path:str):
-    with sqlite3.connect(db_path) as con:
-        cur = con.cursor()
-        cur.execute("""
-            CREATE TABLE IF NOT EXISTS accounts_info (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT UNIQUE,
-                    password  BLOB,
-                    dob DATE,
-                    email TEXT Unique
-                );
-                    """)
-        con.commit()
-
 
 #------------------------ password -------------------------------
 
@@ -50,46 +38,46 @@ def validate_password(pw):
 # fetch
 
 
-def fetch_password_by_username(username:str,db_path:str):
-    with sqlite3.connect(db_path) as con:
+def fetch_password_by_username(username:str,db_path:str=DB_PATH):
+    with psycopg.connect(db_path) as con:
         cur = con.cursor()
-        cur.execute("SELECT password from accounts_info where username = ?",(username,))
+        cur.execute( "SELECT password FROM accounts_info WHERE username = %s",(username,))
         row = cur.fetchone()
     return row[0] if row else None
 
 
 #------------------------ check if Xyz exists-----------------
-def check_if_user_exists(username:str,db_path:str):
-    with sqlite3.connect(db_path) as con:
+def check_if_user_exists(username:str,db_path:str=DB_PATH):
+    with psycopg.connect(db_path) as con:
         cur = con.cursor()
-        cur.execute("SELECT username from accounts_info where username = ?",(username,))
+        cur.execute("SELECT username from accounts_info where username = %s",(username,))
         row = cur.fetchone()
     return row is not None
 
-def check_if_email_exists(email:str,db_path:str):
-    with sqlite3.connect(db_path) as con:
+def check_if_email_exists(email:str,db_path:str=DB_PATH):
+    with psycopg.connect(db_path) as con:
         cur = con.cursor()
-        cur.execute("SELECT email from accounts_info where email = ?",(email,))
+        cur.execute("SELECT email from accounts_info where email = %s",(email,))
         row = cur.fetchone()
     return row is not None
 
 
 #------------------------ Signup -------------------------------
 
-def insert_account_info(username:str,password:str,dob:str,email:str,db_path):
+def insert_account_info(username:str,password:str,dob:str,email:str,db_path:str=DB_PATH):
     if not all([username,password,dob,email]):
         raise ValueError(dedent("All the fields are required"))
     username= username.lower().strip()
     email = email.lower().strip()
     encoded_pwd = PasswordEncoder(password=password)
     try:
-        with sqlite3.connect(db_path) as con:
+        with psycopg.connect(db_path) as con:
             cur = con.cursor()
             cur.execute("""INSERT INTO accounts_info
-                                (username, password, dob, email) VALUES (?, ?, ?, ?);
+                                (username, password, dob, email) VALUES (%s, %s, %s, %s);
                         """,(username, encoded_pwd, dob, email))
             con.commit()
-    except sqlite3.IntegrityError:
+    except psycopg.IntegrityError:
         raise ValueError(dedent("username or email already exists"))
 
 

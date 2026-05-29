@@ -74,9 +74,6 @@ def create_timestamp(db_path):
 
 
 
-create_accounts_info_table(db_path=db_path)
-
-
 
 create_timestamp(db_path)
 
@@ -114,11 +111,6 @@ def confirm_passwords(pwd,c_pwd):
     if pwd!=c_pwd:
         raise ValueError("Passwords do not match")
     return True
-
-
-
-
-
 
 
 if "user" not in st.session_state:
@@ -170,7 +162,7 @@ if "user" not in st.session_state:
         username = st.text_input("Username")
         password = st.text_input("Password", type="password")
         if st.button("SignIn"):
-                
+            
             try:
                 if not username or not password:
                     st.warning("Please fill all fields")
@@ -195,31 +187,6 @@ if "user" not in st.session_state:
 
 
 
-def get_all_threads(db_path, user):
-    if not os.path.exists(db_path):
-        return []
-
-    with connect(db_path) as con:
-        cur = con.cursor()
-
-        # check table exists
-        cur.execute("""
-            SELECT name FROM sqlite_master
-            WHERE type='table' AND name='checkpoints';
-        """)
-        if not cur.fetchone():
-            return []
-
-        cur.execute("""
-            SELECT DISTINCT thread_id
-            FROM checkpoints
-            WHERE thread_id LIKE ?
-            ORDER BY created_at DESC
-        """, (f"{user}%",))
-
-        rows = cur.fetchall()
-
-    return [r[0] for r in rows]
 
 
 username = st.session_state['user']['username']
@@ -228,28 +195,10 @@ if "chat_id"  not in  st.session_state["user"]:
     st.session_state["user"]['chat_id']= f"{username}_{str(uuid4())}"
 
 
-def is_chat_empty(thread_id):
-    if not os.path.exists(db_path):
-        return True
+def is_chat_empty(thread_id:str):
+    response = requests.get(url=f"http://localhost:8005/is_chat_empty?thread_id={thread_id}")
+    return response.json()['response']['is_empty']
 
-    with connect(db_path) as con:
-        cur = con.cursor()
-
-        # ensure table exists
-        cur.execute("""
-            SELECT name FROM sqlite_master
-            WHERE type='table' AND name='checkpoints';
-        """)
-        if not cur.fetchone():
-            return True
-
-        cur.execute(
-            "SELECT COUNT(*) FROM checkpoints WHERE thread_id=?",
-            (thread_id,)
-        )
-        count = cur.fetchone()[0]
-
-    return count == 0
 
 
 st.sidebar.title("Vighna Mitra Ai")
@@ -268,6 +217,8 @@ if st.sidebar.button("New chat"):
 
 
 
+response_threads = requests.get(url=f"http://localhost:8005/thread_ids?user_id={username}")
+threads = response_threads.json()['response']['thread_ids']
 
 
 
@@ -276,7 +227,7 @@ st.sidebar.button(st.session_state["user"]["chat_id"],width=200)
 st.sidebar.markdown("---\n")
 sidebar_sections = st.sidebar.selectbox("select: ",["chat history","connectors","attach documents"],width=200)
 if sidebar_sections =="chat history":
-    chat_history = get_all_threads(db_path,username)
+    chat_history = threads
     st.sidebar.markdown("---\nchat history chat:")
     if chat_history:
         for chat in chat_history:
@@ -363,18 +314,19 @@ config = {"configurable":{
             "thread_id":st.session_state['user']['chat_id']
         }
     }
+try:
+    response_messages = requests.get(url=f"http://localhost:8005/chat/history?thread_id={st.session_state['user']['chat_id']}")
+    if response_messages.status_code == 200:
+        messages = response_messages.json()['response']['messages']
+    else:
+        messages=None
+except:
+    messages=None
 
-def get_messages(config):
-    state = asyncio.run(chatbot.aget_state(config=config))
-    return state.values.get("messages", [])
-
-messages = get_messages(config)
-
-for msg in messages:
-    role = "user" if msg.type == "human" else "assistant"
-    with st.chat_message(role):
-        st.write(msg.content)
-
+if messages:
+        for msg in messages:
+            with st.chat_message(msg["role"]):
+                st.write(msg['content'])
 
 user_input = st.chat_input("Ask Anything")
 
@@ -387,31 +339,39 @@ def fake_stream_response(text:str):
 
 
 
-
-def get_chatbot_response(user_id:str,user_input:str,config: dict):
-    return asyncio.run(chatbot.ainvoke({
-        "messages":[HumanMessage(content=user_input)],
-        "system_messages": [],
-        "summary": {
-            "summary_content": "",
-            "summary_end_index": 0
-        },
-        "retrieval_details": None,
-        "user_details": {
-            "user_id": user_id,
-            "user_memory": None
-        },
-        "trace": []
-    },
-                config=config
-            ))
-
+"""
+# def get_chatbot_response(user_id:str,user_input:str,config: dict):
+#     return asyncio.run(chatbot.ainvoke({
+#         "messages":[HumanMessage(content=user_input)],
+#         "system_messages": [],
+#         "summary": {
+#             "summary_content": "",
+#             "summary_end_index": 0
+#         },
+#         "retrieval_details": None,
+#         "user_details": {
+#             "user_id": user_id,
+#             "user_memory": None
+#         },
+#         "trace": []
+#     },
+#                 config=config
+#             ))
+"""
 
 if user_input:
     with st.chat_message(name="user"):
         st.write(user_input)
     with st.spinner("thinking...."):
-        result_state = get_chatbot_response(user_id=username,user_input=user_input,config=config)
+        response = requests.post(
+            "http://localhost:8005/chat",
+            json={
+                "message":user_input,
+                "user_id":username,
+                "thread_id":st.session_state['user']['chat_id']
+            }
+        )
+        result_state = response.json()['response']
 
     with st.chat_message(name="assistant"):
         if "trace" in result_state:

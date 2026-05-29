@@ -1,19 +1,57 @@
 services:
+
+
+
   postgres:
     image: pgvector/pgvector:pg16 #old :postgres:16
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
       POSTGRES_DB: postgres
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./init-db:/docker-entrypoint-initdb.d
+
     ports:
       - "5442:5432"
-  streamlit:
-    build: .
-    container_name: streamlit_app
+
+  mcp-server:
+    image: mcp-server-expense-tracker
+    ports:
+      - "8009:8009"
+    volumes:
+    - ./expense_records:/app/data
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile.app
+    container_name: app
     command: uv run streamlit run app.py --server.port 8501 --server.address 0.0.0.0
     ports:
       - "8501:8501"
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    ports:
+      - "8005:8005"
     depends_on:
       - postgres
+      - mcp-server
     env_file:
       - .env
+
+  ollama:
+    image: ollama/ollama
+    container_name: ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama   # reuse existing volume
+    restart: always
+
+volumes:
+  pgdata:
+  ollama_data:
+    external: true 

@@ -3,11 +3,10 @@ import os
 import dotenv
 
 # Third-party
-import psycopg
-from aiosqlite import connect
+from psycopg import AsyncConnection
 from langgraph.graph import StateGraph, START, END
-from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
-from langgraph.store.postgres import PostgresStore
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+from langgraph.store.postgres.aio import AsyncPostgresStore
 from langgraph.prebuilt import tools_condition
 
 # Local
@@ -34,20 +33,15 @@ DB_POSTGRES_URL = os.getenv("DB_POSTGRES_URL")
 
 async def base_chatbot():
 
-    #  Async Postgres connection with autocommit
-    postgres_conn = psycopg.connect(
-        conninfo=DB_POSTGRES_URL,
-        autocommit=True
-    )
-
-    #  Store setup
-    store = PostgresStore(conn=postgres_conn)
-    store.setup()
-
+    
+    
     #  Build graph
     builder_graph = StateGraph(ChatBotState)
 
-    _,tool_node = await initialize_mcp_tools()
+
+    
+    #While only a few MCP tools are included, they demonstrate my capability to build MCP servers and implement custom tool logic
+    _,tool_node = await initialize_mcp_tools("expense_tracker") 
 
     builder_graph.add_node("init_SystemMessage", init_SystemMessage)
     builder_graph.add_node("system_message_summarizer_node", system_message_summarizer_node)
@@ -67,8 +61,6 @@ async def base_chatbot():
         "retrieve_user_memory_node":"retrieve_user_memory_node",
         "chat_node": "summarize_node"
     })
-    
-    
 
     builder_graph.add_edge("summarize_node", "chat_node")
     # Conditional edges from chat_node based on tools_condition
@@ -84,9 +76,18 @@ async def base_chatbot():
     builder_graph.add_edge("remember_node", END)
 
 
-    #  Async SQLite checkpoint
-    conn = await connect("data/vighnamitraai.db", check_same_thread=False)
-    checkpointer = AsyncSqliteSaver(conn=conn)
+
+    postgres_conn = await AsyncConnection.connect(
+        conninfo=DB_POSTGRES_URL,
+        autocommit=True
+    )
+
+    #  Store setup
+    store = AsyncPostgresStore(conn=postgres_conn)
+    checkpointer = AsyncPostgresSaver(conn=postgres_conn)
+
+    await store.setup()
+    await checkpointer.setup()
 
     #  Compile graph
     return builder_graph.compile(

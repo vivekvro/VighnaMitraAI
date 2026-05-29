@@ -16,7 +16,7 @@ from langgraph.store.postgres import PostgresStore
 from langgraph.prebuilt import ToolNode
 from langchain_mcp_adapters.client import MultiServerMCPClient
 # Local Project Imports
-from src.LLMs.load_llm import llama3_8b, llama_3_3_70b_versatile
+from src.LLMs.load_llm import gpt_oss_20b, gpt_oss_120b
 from src.state import ChatBotState
 from src.rag.retrievers import load_vectorstore,embedding
 from src.configs.config_methods import load_config
@@ -28,21 +28,27 @@ DB_POSTGRESSTORE_PATH = os.getenv("DB_POSTGRES_URL")
 
 
 #----------------LLMs Setups -------------------------
-llm_summarizer = llama3_8b()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
-llm = llama_3_3_70b_versatile()# i am using this for token size efficiency, but you can choose any capable model here, ideally the same one used for the main conversation to maintain consistency in response style and capabilities. Adjust based on your specific requirements and token limits.
+llm_summarizer = gpt_oss_20b()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
+llm = gpt_oss_120b()# i am using this for token size efficiency, but you can choose any capable model here, ideally the same one used for the main conversation to maintain consistency in response style and capabilities. Adjust based on your specific requirements and token limits.
 #-----------------------------------------------
+
+
+
 #get tools
 _tools_cache = None# global cache for tools to avoid redundant loading across nodes, since tool retrieval can be time-consuming and we want to ensure efficient access to the same set of tools throughout the conversation flow.
 _llm_with_tools = None# global variable to hold the LLM instance bound with tools, allowing us to reuse the same tool-enabled LLM across different nodes without needing to re-bind it multiple times, which can be inefficient. This ensures that once we initialize the LLM with tools, we can easily access it whenever needed in the conversation flow.
 _tool_node = None# global variable to hold the initialized ToolNode instance, allowing us to reuse the same node across different parts of the conversation flow without needing to re-initialize it multiple times. This ensures that once we set up the ToolNode with the retrieved tools, we can easily access it whenever we need to invoke tool-related actions in the conversation.
 
-async def initialize_mcp_tools():# This function initializes the tools from the MCP client and binds them to the LLM. It uses global variables to cache the tools, the LLM with tools, and the ToolNode instance, ensuring that we only load and bind the tools once per conversation session for efficiency. If the tools are already cached, it simply returns the existing LLM with tools and ToolNode instance.
+async def initialize_mcp_tools(servers_name:str):# This function initializes the tools from the MCP client and binds them to the LLM. It uses global variables to cache the tools, the LLM with tools, and the ToolNode instance, ensuring that we only load and bind the tools once per conversation session for efficiency. If the tools are already cached, it simply returns the existing LLM with tools and ToolNode instance.
     global _tools_cache, _llm_with_tools, _tool_node
 
     if _tools_cache is None:
-        servers = await load_config()
+        mcp_config = load_config()
 
-        client = MultiServerMCPClient(servers)
+        expense_tracker_server = mcp_config[servers_name]
+
+
+        client = MultiServerMCPClient(expense_tracker_server)
 
         _tools_cache = await asyncio.wait_for(
             client.get_tools(),
@@ -120,8 +126,8 @@ SYSTEM_PROMPT_TEMPLATE = """You are VighnaMitra, an AI friend (not an assistant)
 
 
 
-def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str,num_docs:int,store: BaseStore):# This function retrieves basic memories from the vector store based on the provided namespace, filter type, search query, and number of documents to fetch. It constructs a search query using the specified parameters and retrieves relevant memories that match the filter type. The retrieved memories are then formatted into a string that can be included in the system message for initializing the conversation context.
-    items =  store.search(
+async def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str,num_docs:int,store: BaseStore):# This function retrieves basic memories from the vector store based on the provided namespace, filter type, search query, and number of documents to fetch. It constructs a search query using the specified parameters and retrieves relevant memories that match the filter type. The retrieved memories are then formatted into a string that can be included in the system message for initializing the conversation context.
+    items = await store.search(
         namespace,
         query=search_query,
         limit=num_docs,
@@ -134,7 +140,7 @@ def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str,num_d
 
 
 # this node is responsible for initializing the system message with relevant user information and memories. It retrieves various types of memories from the vector store based on predefined queries, formats them, and constructs a comprehensive system message that sets the context for the conversation. This ensures that the LLM has access to important user details and relevant information right from the start, guiding its responses and interactions effectively throughout the conversation.
-def init_SystemMessage(state: ChatBotState, store: BaseStore):
+async def init_SystemMessage(state: ChatBotState, store: BaseStore):
     # Initialize the system message with basic user information,
     # relevant memories, and core behavioral instructions for the LLM
     # to guide the conversation from the very beginning.
@@ -254,10 +260,10 @@ def init_SystemMessage(state: ChatBotState, store: BaseStore):
     all_memories = []
 
     for key, queries in memory_queries.items():
-        
+
         search_query = " ".join(queries)
 
-        result = get_BasicMemories(
+        result = await get_BasicMemories(
             namespace=namespace,
             filter_by_type=key,
             search_query=search_query,
@@ -303,7 +309,7 @@ async def chat_node(state: ChatBotState):
         messages.extend(last_messages)
     else:
         messages.extend(last_messages)
-    llm_with_tools, _ = await initialize_mcp_tools()
+    llm_with_tools, _ = await initialize_mcp_tools("expense_tracker")
     response = await llm_with_tools.ainvoke(messages)
 
     return {
@@ -341,11 +347,6 @@ System Messages:
             return {"system_messages":[SystemMessage(content=response.content)],"trace": trace}
         else:
             return state
-
-
-
-
-
 
 def summarize_conversation(state: ChatBotState):
     last_summarized_index = state['summary']['summary_end_index']
@@ -460,13 +461,13 @@ Formatting:
 If no valid memory is found, return an empty list.
 """)
 
-def remember_node(state: ChatBotState, store: BaseStore):# This node is responsible for determining whether there is new, reusable information in the recent conversation that should be remembered for future interactions. It retrieves the existing memories for the user, analyzes the recent messages using a structured prompt to decide if new memories should be extracted, and if so, it stores the new memories in the vector store. The decision and extraction process is guided by specific rules to ensure that only relevant and useful information is remembered, while avoiding trivial or one-time details.
+async def remember_node(state: ChatBotState, store: BaseStore):# This node is responsible for determining whether there is new, reusable information in the recent conversation that should be remembered for future interactions. It retrieves the existing memories for the user, analyzes the recent messages using a structured prompt to decide if new memories should be extracted, and if so, it stores the new memories in the vector store. The decision and extraction process is guided by specific rules to ensure that only relevant and useful information is remembered, while avoiding trivial or one-time details.
 
     user_id = state['user_details']["user_id"]
     namespace = ("user", user_id, "details")
 
     # 🔹 1. Fetch existing memory safely
-    items = store.search(namespace)
+    items = await store.asearch(namespace)
 
     existing_list = [
         it.value.get("data", "")
@@ -654,7 +655,6 @@ def retriever_node(state: ChatBotState):
     user_id = state['user_details']['user_id']
     query_list = state['retrieval_details']['rag_details']
     user_msg = state['retrieval_details']['user_msg']
-    system_message = state['system_messages']
 
     vector_store = load_vectorstore(user_id)
     if not vector_store:
@@ -669,7 +669,9 @@ def retriever_node(state: ChatBotState):
             search_query=query.search_query,
             source=query.filter_by_source,
             top_k=query.num_docs)
+
         query_list_result.append(f"""Query for RAG: {query.search_query}\nRAG response: {result_rag} \n source: {query.filter_by_source  if query.filter_by_source else "Not mentioned"}""")
+
     total_results = "\n\n".join(query_list_result)
     retriever_context_message = [SystemMessage(content=f"""
 You are a retrieval consolidation system.
@@ -709,14 +711,14 @@ Final Consolidated Answer:
     }
 
 # user memories
-def retrieve_user_memory_node(state: ChatBotState, store: BaseStore): # This node is responsible for retrieving relevant user memories from the vector store based on the current user query and the specified retrieval details. It constructs a consolidated system message that includes the retrieved memories, which can then be used by the LLM to provide more informed and personalized responses to the user's query. The node ensures that only relevant and helpful memories are included in the system message, while ignoring any unrelated or non-useful information.
+async def retrieve_user_memory_node(state: ChatBotState, store: BaseStore): # This node is responsible for retrieving relevant user memories from the vector store based on the current user query and the specified retrieval details. It constructs a consolidated system message that includes the retrieved memories, which can then be used by the LLM to provide more informed and personalized responses to the user's query. The node ensures that only relevant and helpful memories are included in the system message, while ignoring any unrelated or non-useful information.
     query_list = state["retrieval_details"]['user_memories']
     main_query = state['retrieval_details']['user_msg']
     user_id = state['user_details']['user_id']
     namespace = ("user", user_id, "details")
     query_results = []
     for query in query_list:
-        fetched_result = get_BasicMemories(
+        fetched_result = await get_BasicMemories(
             namespace=namespace,
             filter_by_type=query.filter_by_type,
             search_query=query.search_query,

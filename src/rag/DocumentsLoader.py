@@ -1,15 +1,8 @@
-import tempfile
-from typing import Annotated,Literal
+from typing import Literal
 from langchain_community.document_loaders import WebBaseLoader,PyMuPDFLoader,TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 
-
-def load_tempfile_path(upload_file):
-    if upload_file is not None:
-        with tempfile.NamedTemporaryFile(delete=False) as tmpfile:
-            tmpfile.write(upload_file.read())
-            return tmpfile.name
 
 
 class DocLoader:

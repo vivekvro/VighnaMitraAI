@@ -16,13 +16,17 @@ def gpt_oss_20b(temperature=0.7):
 def qwen3_32b(temperature=0.7):
     load_dotenv()
     return ChatGroq(model="qwen/qwen3-32b",temperature=temperature)
+def llama3_4b(temperature=0.7):
+    load_dotenv()
+    return ChatOllama(
+        model="llama3:4b",
+        temperature=temperature,
+        base_url="http://localhost:11434"
+        )
+# def gemma4_e4b(temperature=0.7):
+#     load_dotenv()
+#     return ChatOllama(model="gemma4:e4b",num_gpu=0,temperature=temperature)
 
-def gemma4_e4b(temperature=0.7):
-    load_dotenv()
-    return ChatOllama(model="gemma4:e4b",num_gpu=0,temperature=temperature)
-def llama3_8b(temperature=0.7):
-    load_dotenv()
-    return ChatOllama(model="llama3:8b",num_gpu=0,temperature=temperature)
-def qwen2_5_coder_7b(temperature=0.7):
-    load_dotenv()
-    return ChatOllama(model="qwen2-5-coder:7b",num_gpu=0,temperature=temperature)
+# def qwen2_5_coder_7b(temperature=0.7):
+#     load_dotenv()
+#     return ChatOllama(model="qwen2-5-coder:7b",num_gpu=0,temperature=temperature)
