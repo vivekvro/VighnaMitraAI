@@ -5,6 +5,9 @@ CREATE TABLE IF NOT EXISTS accounts_info (
     dob DATE,
     email TEXT UNIQUE
 );
+
+
+
 CREATE TABLE uploaded_documents (
     id BIGSERIAL PRIMARY KEY,
 

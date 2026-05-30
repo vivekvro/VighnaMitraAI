@@ -1,19 +1,23 @@
 from fastapi import FastAPI,HTTPException,UploadFile,File,Form
 from src.rag.DocumentsLoader import DocLoader
 from pydantic import BaseModel,Field
+from src.chatbots.nodes import document_summarizer
 from src.rag.retrievers import update_vectorstore
 from src.chatbots.chatbot_graphs import base_chatbot
 from langchain_core.messages import HumanMessage
-
+import hashlib
 from psycopg import AsyncConnection
 
 import tempfile,os
 from contextlib import asynccontextmanager
-DB_PATH = os.getenv("DB_POSTGRES_URL")
+
 
 from dotenv import load_dotenv
 load_dotenv()
 
+
+
+DB_PATH = os.getenv("DB_POSTGRES_URL")
 chatbot = None
 
 
@@ -163,21 +167,72 @@ async def load_tempfile_path(upload_file:UploadFile):
         tmpfile.write(await upload_file.read())
         return tmpfile.name
 
+
+
+async def file_exists(conn, thread_id: str, file_hash: str) -> bool:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT EXISTS (
+                SELECT 1
+                FROM uploaded_documents
+                WHERE thread_id = %s
+                  AND file_hash = %s
+            )
+            """,
+            (thread_id, file_hash),
+        )
+
+        return (await cur.fetchone())[0]
+
+
+
+async def get_file_hash(file: UploadFile) -> str:
+    content = await file.read()
+
+    # reset cursor so the file can be read again later
+    await file.seek(0)
+
+    return hashlib.sha256(content).hexdigest()
+
 @app.post("/upload")
 async def upload(file:UploadFile=File(...),thread_id:str=Form(...),user_id:str=Form(...)):
     try:
-        file_type= MIME_TO_EXTENSION[file.type]
-        temp_fila_path = await load_tempfile_path(file)
-        loader = DocLoader(doctype=file_type,path=temp_fila_path)
-        docs = loader.load()
-
-        if not docs:
-            raise HTTPException(status_code=500,detail="NO document is loaded")
-        if update_vectorstore(docs=docs,user_id=file.user_id):
-            return {"response":"Uploaded Successfully"}
-        else:
-            return {"response":"something went wrong."}
+        file_type = MIME_TO_EXTENSION.get(file.content_type)
+        if not file_type:
+            raise HTTPException(
+                status_code=400,
+                detail="Unsupported file type"
+                )
+        file_name = file.filename
+        file_hash =  await get_file_hash(file)
+        async with await AsyncConnection.connect(DB_PATH) as con:
+            if await file_exists(conn=con,thread_id=thread_id,file_hash=file_hash):
+                return {"response":"File already Exists"}
+            else:
+                temp_file_path = await load_tempfile_path(file)
+                loader = DocLoader(doctype=file_type,path=temp_file_path)
+                docs = loader.load()
+                for doc in docs:
+                    doc.metadata['file_hash'] = file_hash
+                    doc.metadata['file_name'] = file_name
+                if not docs:
+                    raise HTTPException(status_code=500,detail="NO document is loaded")
+                doc_summary = await document_summarizer(docs=docs,summary_max_len=650)
+                if update_vectorstore(
+                        docs=docs,
+                        user_id=user_id,
+                        thread_id=thread_id,
+                        file_hash=file_hash):
+                    async with con.cursor() as cur:
+                        await cur.execute("""
+                                    INSERT INTO uploaded_documents (user_id,thread_id,file_name,file_hash,summary)
+                                    VALUES (%s,%s,%s,%s,%s);
+                                    """,(user_id,thread_id,file_name,file_hash,doc_summary))
+                        await con.commit()
+                        return {"response":"Uploaded Successfully"}
+                else:
+                    return {"response":"something went wrong."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
 

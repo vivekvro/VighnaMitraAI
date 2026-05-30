@@ -10,21 +10,21 @@ BASE_DIR = Path(__file__).resolve().parent.parent.parent
 VECTORSTORE_DIR_PATH = BASE_DIR / "data" / "vectorstore"
 
 
-def get_vectorstore_path(user_id: str):
-    return VECTORSTORE_DIR_PATH / user_id
+def get_vectorstore_path(user_id: str,thread_id:str,):
+    return VECTORSTORE_DIR_PATH / user_id / thread_id
 
 
-def create_vectorstore(user_id: str, docs):
-    path = get_vectorstore_path(user_id)
-    
+def create_vectorstore(user_id: str,thread_id:str, docs):
+    path = get_vectorstore_path(user_id,thread_id)
+    path.mkdir(parents=True, exist_ok=True)
 
     vectorstore = FAISS.from_documents(docs, embedding=embedding)
     vectorstore.save_local(str(path))
     return vectorstore
 
 
-def load_vectorstore(user_id: str):
-    path = get_vectorstore_path(user_id)
+def load_vectorstore(user_id: str,thread_id:str):
+    path = get_vectorstore_path(user_id,thread_id)
 
     if not path.exists():
         return None
@@ -38,16 +38,16 @@ def load_vectorstore(user_id: str):
         print(f"load error: {e}")
         return None
 
-def update_vectorstore(docs, user_id: str):
+def update_vectorstore(docs, user_id: str,thread_id:str,file_hash:str):
     try:
-        path = get_vectorstore_path(user_id)
-        vectorstore = load_vectorstore(user_id)
+        path = get_vectorstore_path(user_id,thread_id)
+        vectorstore = load_vectorstore(user_id=user_id,thread_id=thread_id)
 
         if not docs:
             return False
 
         if vectorstore is None:
-            create_vectorstore(user_id, docs)
+            create_vectorstore(user_id=user_id,thread_id=thread_id, docs=docs)
         else:
             vectorstore.add_documents(docs)
             vectorstore.save_local(str(path))

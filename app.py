@@ -2,80 +2,28 @@
 import os
 import re
 import time
-import asyncio
 import datetime as dt
 from uuid import uuid4
-from sqlite3 import connect
 
 
 # Third-party
 import requests
 import streamlit as st
 from dotenv import load_dotenv
-from langchain_core.messages import HumanMessage
 
 # Local
 from src.encrypt import ComparePasswords
 from src.user_auth import (
-    create_accounts_info_table,
     insert_account_info,
     check_if_email_exists,
     check_if_user_exists,
     fetch_password_by_username,
 )
 from src.rag.retrievers import update_vectorstore
-from src.chatbots.chatbot_graphs import base_chatbot
 from src.rag.DocumentsLoader import load_tempfile_path, DocLoader
 
 load_dotenv()
 
-
-
-
-db_path = "data/vighnamitraai.db"
-
-def load_chatbot():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    return loop.run_until_complete(base_chatbot())
-
-chatbot = load_chatbot()
-
-
-
-
-
-
-
-def create_timestamp(db_path):
-    with connect(db_path) as con:
-        cur = con.cursor()
-
-        # ✅ check table exists first
-        cur.execute("""
-            SELECT name FROM sqlite_master
-            WHERE type='table' AND name='checkpoints';
-        """)
-        if not cur.fetchone():
-            return  # 🚀 skip safely
-
-        # check columns
-        cur.execute("PRAGMA table_info(checkpoints)")
-        columns = [col[1] for col in cur.fetchall()]
-
-        if "created_at" not in columns:
-            cur.execute("""
-                ALTER TABLE checkpoints 
-                ADD COLUMN created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-            """)
-
-
-
-
-
-
-
-create_timestamp(db_path)
 
 def validate_username(username: str):
     pattern = r"^[a-zA-Z0-9._]{3,20}$"
@@ -131,10 +79,10 @@ if "user" not in st.session_state:
             try:
                 validate_username(username=username)
                 validate_email(email=email)
-                if check_if_user_exists(username,db_path):
+                if check_if_user_exists(username):
                     st.error("User already exists!")
                     st.stop()
-                if check_if_email_exists(email,db_path):
+                if check_if_email_exists(email):
                     st.error("Email already exists!")
                     st.stop()
                 
@@ -143,7 +91,7 @@ if "user" not in st.session_state:
                     st.error("Password must contain:\n- Minimum 8 characters\n- At least 1 uppercase letter (A-Z)\n- At least 1 lowercase letter (a-z)\n- At least 1 number (0-9)\n- At least 1 special character (!@#$%^&*)")
                     st.stop()
                 confirm_passwords(password,confirm_password)
-                insert_account_info(username=username,password=password,email=email,dob=dob,db_path=db_path)
+                insert_account_info(username=username,password=password,email=email,dob=dob)
                 st.success(f"Account Created! hey {username.lower().strip()}.")
                 st.session_state['user']={"username":username.lower().strip()}
                 st.rerun()
@@ -167,10 +115,10 @@ if "user" not in st.session_state:
                 if not username or not password:
                     st.warning("Please fill all fields")
                     st.stop()
-                if not check_if_user_exists(username,db_path):
+                if not check_if_user_exists(username):
                         st.error("User does not exist!")
                         st.stop()
-                stored_pwd = fetch_password_by_username(username=username,db_path=db_path)
+                stored_pwd = fetch_password_by_username(username=username)
                 if not ComparePasswords(password,stored_pwd):
                     st.error("Invalid Password")
                     st.stop()

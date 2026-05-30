@@ -7,16 +7,17 @@ from typing import List,Optional,Literal
 # Third-party Libraries
  
 from pydantic import BaseModel, Field
+from langchain_core.documents import Document
 from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.prompts import PromptTemplate
-from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.output_parsers import PydanticOutputParser,StrOutputParser
 from langgraph.store.base import BaseStore
 from langgraph.store.postgres import PostgresStore
 from langgraph.prebuilt import ToolNode
 from langchain_mcp_adapters.client import MultiServerMCPClient
 # Local Project Imports
-from src.LLMs.load_llm import gpt_oss_20b, gpt_oss_120b
+from src.LLMs.load_llm import llama3_4b, gpt_oss_120b
 from src.state import ChatBotState
 from src.rag.retrievers import load_vectorstore,embedding
 from src.configs.config_methods import load_config
@@ -28,7 +29,7 @@ DB_POSTGRESSTORE_PATH = os.getenv("DB_POSTGRES_URL")
 
 
 #----------------LLMs Setups -------------------------
-llm_summarizer = gpt_oss_20b()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
+llm_summarizer = llama3_4b()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
 llm = gpt_oss_120b()# i am using this for token size efficiency, but you can choose any capable model here, ideally the same one used for the main conversation to maintain consistency in response style and capabilities. Adjust based on your specific requirements and token limits.
 #-----------------------------------------------
 
@@ -396,6 +397,93 @@ def summarize_conversation(state: ChatBotState):
         }
     else:
         return state
+
+#document summarizer
+
+async def document_summarizer(docs:list[Document] | list[str],summary_max_len:int= 800, threshold=2000)->str:
+    if not docs:
+        return ""
+    tasks =  []
+    for i in range(0, len(docs), 2):
+        text = "\n\n".join([doc.page_content if isinstance(doc,Document) else doc for doc in docs[i:i+2]])
+        chunk_prompt = PromptTemplate(template="""You are an expert document analyst.
+
+The input text is not a complete document. It consists of 2 document chunks combined together from a larger document.
+
+Your task is to compress and summarize the provided content while preserving all important information. The output should be significantly shorter than the input so it can be used in the next summarization iteration.
+
+Requirements:
+
+* Retain key facts, decisions, findings, requirements, conclusions, and technical details.
+* Preserve important numbers, dates, names, metrics, and entities.
+* Remove repetition, examples, filler text, and non-essential explanations.
+* Merge related information when possible.
+* Do not invent information or make assumptions about missing parts of the document.
+* Focus on information density rather than readability.
+* Produce a summary that is roughly 20-30% of the input size while preserving the core meaning.
+
+The resulting summary will be merged with another summary and processed again in subsequent iterations, so information loss should be minimized.
+
+Output only the compressed summary.
+
+Input Chunks:
+{text}
+""",input_variables=['text'])
+        chunk_chain = chunk_prompt | llm_summarizer | StrOutputParser()
+        chunk_result = await chunk_chain.ainvoke({"text":text})
+        tasks.append(chunk_chain.ainvoke({"text": text}))
+    chunk_summaries = await asyncio.gather(*tasks)
+
+    if len(chunk_summaries)!=1 and sum(len(s) for s in chunk_summaries) > threshold:
+            return await document_summarizer(
+                chunk_summaries,
+                summary_max_len=summary_max_len,
+                threshold=threshold
+                )
+    else:
+        final_text = "\n\n".join(chunk_summaries)
+        final_summary_prompt = PromptTemplate(template="""You are an expert document analyst.
+
+The input consists of intermediate summaries generated from different parts of a larger document. These summaries have already been compressed while preserving important information.
+
+Your task is to create a final consolidated summary of the entire document.
+
+Requirements:
+
+* Merge related information from all summaries into a coherent final summary.
+* Preserve key facts, findings, decisions, requirements, conclusions, and technical details.
+* Retain important numbers, dates, names, metrics, entities, and references.
+* Remove duplicate or overlapping information.
+* Prioritize accuracy and completeness over extreme compression.
+* Do not invent information or make assumptions beyond the provided content.
+* Organize information logically.
+* Produce a concise but comprehensive summary suitable for end users.
+
+Output Format:
+
+# Executive Summary
+
+<A concise overview of the document>
+
+# Key Points
+
+* Bullet points covering the most important information
+
+# Important Details
+
+* Critical numbers, dates, entities, requirements, findings, or technical information
+* The final output MUST be under {summary_size} characters, including headings, bullets, and whitespace.
+Output only the final summary.
+
+Input Summaries:
+{text}
+""",input_variables=['text',"summary_size"])
+        final_summary_chain = final_summary_prompt | llm_summarizer | StrOutputParser()
+        return await final_summary_chain.ainvoke({"text":final_text,"summary_size":summary_max_len})
+        
+
+
+
 
 #------------------Remember-node-----------------------------
 class NewMemoryDetails(BaseModel):# This Pydantic model defines the structure for new memory details that are extracted from the conversation. Each memory consists of a concise, atomic fact (memory) and a corresponding category (memory_type) that classifies the type of information. The memory_type is restricted to specific categories such as personal, habit, interests, goals, skills, dislikes, preferences, learning_style, projects, tools, constraints, knowledge_level, career, education, behavior, decisions, context, and health. This structured format ensures that the extracted memories are organized and can be easily stored and retrieved for future use in the conversation.
