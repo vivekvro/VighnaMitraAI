@@ -22,7 +22,7 @@ from src.chatbots.nodes import (
     retrieve_user_memory_node,
 )
 from src.chatbots.node_conditions import (
-        MemoryCondition
+        memory_router
     )
 # --------------------------------------------------------------------------------------
 
@@ -56,9 +56,9 @@ async def base_chatbot():
     builder_graph.add_edge(START, "init_SystemMessage")
     builder_graph.add_edge("init_SystemMessage", "system_message_summarizer_node")
     # Conditional edges from system_message_summarizer_node based on MemoryCondition
-    builder_graph.add_conditional_edges("system_message_summarizer_node", MemoryCondition, {
-        "retriever_node": "retriever_node",
-        "retrieve_user_memory_node":"retrieve_user_memory_node",
+    builder_graph.add_conditional_edges("system_message_summarizer_node", memory_router, {
+        "uploaded_documents": "retriever_node",
+        "user_memories":"retrieve_user_memory_node",
         "chat_node": "summarize_node"
     })
 

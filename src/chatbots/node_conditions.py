@@ -1,6 +1,5 @@
 # Standard
 from typing import Literal,Optional,List,Set
-
 # Third-party
 from pydantic import BaseModel, Field
 from langchain_core.prompts import PromptTemplate
@@ -8,10 +7,10 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.messages import HumanMessage, AIMessage
 # Local
 from src.state import ChatBotState
-from src.LLMs.load_llm import gpt_oss_120b
+from src.LLMs.load_llm import llama3_4b
 
 
-llm = gpt_oss_120b()
+llm = llama3_4b()
 
 #-------Memory_fetcher_condition------------
 class FetchUserMemoryDetails(BaseModel):
@@ -108,22 +107,6 @@ Examples:
     """)
 
 class MemoryCondition_decisions(BaseModel):
-    requires_retrieval: bool = Field(
-        description="""
-Return True if answering the user's query requires retrieval from:
-- uploaded documents
-- URLs
-- vector databases
-- long-term user memories
-
-Return False if the query can be answered using:
-- general knowledge
-- reasoning or logic
-- conversation context
-- tool usage
-- latest web knowledge (not from uploaded docs)
-"""
-    )
     user_query:Optional[str] = Field(description="""
 The EXACT original latest user message.
 
@@ -175,26 +158,6 @@ Return:
 NOT:
 "Find BERT fine-tuning information in uploaded documents."
 """)
-    retrieval_type:Optional[Set[Literal["uploaded_documents","user_memories"]]] = Field(
-        description="""
-Select the retrieval source type.
-
-Options:
-- "uploaded_documents":
-  Use retrieval over uploaded files, PDFs, notes,
-  URLs, or vector-store document chunks.
-
-  In this case, retrieval_details MUST contain:
-  List[FetchUploadedDocsDetails]
-
-- "user_memories":
-  Use retrieval over long-term user memories
-  stored in BaseStore/PostgresStore.
-
-  In this case, retrieval_details MUST contain:
-  List[FetchUserMemoryDetails]
-"""
-    )
 
     user_memories_retrieval_details: Optional[
         List[FetchUserMemoryDetails]
@@ -430,5 +393,107 @@ Latest User Query:
                 return routes[0]
             return routes
 
+    else:
+        return "chat_node"
+
+
+
+
+
+
+
+
+class Memory_Router_Condition(BaseModel):
+    requires_retrieval: bool = Field(
+        description="""
+Return True if answering the user's query requires retrieval from:
+- uploaded documents
+- URLs
+- vector databases
+- long-term user memories
+
+Return False if the query can be answered using:
+- general knowledge
+- reasoning or logic
+- conversation context
+- tool usage
+- latest web knowledge (not from uploaded docs)
+- if information is already is available 
+"""
+    )
+
+    retrieval_type:Optional[Set[Literal["uploaded_documents","user_memories"]]] = Field(
+        description="""
+Select the retrieval source type.
+
+Options:
+- "uploaded_documents":
+  Use retrieval over uploaded files, PDFs, notes,
+  URLs, or vector-store document chunks.
+
+  In this case, retrieval_details MUST contain:
+  List[FetchUploadedDocsDetails]
+
+- "user_memories":
+  Use retrieval over long-term user memories
+  stored in BaseStore/PostgresStore.
+
+  In this case, retrieval_details MUST contain:
+  List[FetchUserMemoryDetails]
+"""
+    )
+
+def memory_router(state: ChatBotState):
+    parser=PydanticOutputParser(pydantic_object=Memory_Router_Condition)
+    prompt = PromptTemplate(
+        template="""You are a retrieval router.
+
+Determine whether answering the user's query requires retrieval.
+
+user's query:{user_query}
+
+Available sources:
+
+* `uploaded_documents`: user-uploaded files, PDFs, notes, URLs, and vector-store document chunks.
+* `user_memories`: long-term stored user memories.
+
+Set `requires_retrieval = True` only if the required information is not available from:
+
+* the current conversation,
+* the user's message,
+* general knowledge,
+* reasoning,
+* tool outputs already available.
+
+Use:
+
+* `uploaded_documents` when the user refers to uploaded files, documents, notes, PDFs, URLs, or ingested knowledge.
+* `user_memories` when the user asks about stored preferences, past decisions, goals, projects, or remembered information.
+* both when both sources are needed.
+
+Set `requires_retrieval = False` if the query can be answered directly without retrieval.
+
+Prefer `False` when uncertain.
+
+{format_instructions}
+""",
+        input_variables=['user_query'],
+        partial_variables={
+        "format_instructions": parser.get_format_instructions()
+    }
+    )
+    chain = prompt | llm | parser
+    result = chain.invoke({"user_query":state['messages'][-1]})
+
+    if not result.requires_retrieval:
+        return_path = []
+        retrieval_type = result.retrieval_type
+        if "user_memories" in retrieval_type:
+            return_path.append("user_memories")
+        if "uploaded_documents" in retrieval_type:
+            return_path.append("uploaded_documents")
+        if len(return_path)==1:
+            return return_path[0]
+        return return_path
     else:
         return "chat_node"
