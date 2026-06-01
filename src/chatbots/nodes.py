@@ -7,7 +7,7 @@ from typing import List,Optional,Literal
 # Third-party Libraries
  
 from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage
+from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage,AIMessage
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
@@ -16,7 +16,7 @@ from langgraph.store.postgres import PostgresStore
 from langgraph.prebuilt import ToolNode
 from langchain_mcp_adapters.client import MultiServerMCPClient
 # Local Project Imports
-from src.LLMs.load_llm import gpt_oss_20b, gpt_oss_120b
+from src.LLMs.load_llm import llama3_4b, gpt_oss_120b
 from src.state import ChatBotState
 from src.rag.retrievers import load_vectorstore,embedding
 from src.configs.config_methods import load_config
@@ -28,7 +28,7 @@ DB_POSTGRESSTORE_PATH = os.getenv("DB_POSTGRES_URL")
 
 
 #----------------LLMs Setups -------------------------
-llm_summarizer = gpt_oss_20b()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
+llm_summarizer = llama3_4b()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
 llm = gpt_oss_120b()# i am using this for token size efficiency, but you can choose any capable model here, ideally the same one used for the main conversation to maintain consistency in response style and capabilities. Adjust based on your specific requirements and token limits.
 #-----------------------------------------------
 
@@ -609,6 +609,355 @@ Example Output:
     # 🔹 6. Return state unchanged + trace
     return {"trace": update_trace(state, "Remember Node")}
 #-----------------Retriever-nodes------------------------------------------------
+
+
+class FetchUserMemoryDetails(BaseModel):
+    search_query:str = Field(
+        description="""
+Optimized query for memory retrieval.
+
+Focus on user-related context such as:
+preferences, habits, goals, projects, skills,
+or conversational continuity.
+
+Keep the query concise and retrieval-focused.
+"""
+    )
+    filter_by_type:Literal[
+        "personal", "habit","interests","goals","skills","dislikes", "preferences","learning_style",
+        "projects","tools","constraints","knowledge_level","career","education","behavior",
+        "decisions","context","health"
+        ] = Field(
+        description="""
+Single memory category to filter retrieval.
+
+Use the most relevant category for this query.
+
+Examples:
+- "preferences"
+- "projects"
+- "habit"
+"""
+    )
+    num_docs:int = Field(
+        default=10,
+        ge=4,
+        le=25,
+        description="""
+Number of memories to retrieve.
+
+Memories are small atomic facts,
+so larger retrieval sizes are acceptable.
+
+Guidelines:
+- 4-8: focused retrieval
+- 9-15: normal conversational continuity
+- 16-25: broad contextual personalization
+"""
+    )
+
+class FetchUploadedDocsDetails(BaseModel):
+    search_query:str = Field(
+        description="""
+Optimized semantic search query for uploaded documents.
+
+Preserve important entities, concepts, and intent
+while removing unnecessary conversational wording.
+"""
+    )
+    retrieval_mode :Literal["similarity","mmr"]= Field(
+        default="similarity",
+        description="""
+Retrieval strategy.
+
+- "similarity":
+  Best for highly relevant chunks.
+
+- "mmr":
+  Best for diverse retrieval with less redundancy.
+""")
+    filter_by_source:Optional[str] = Field(
+        default=None,
+        description="""
+Optional source/document filter.
+
+Restrict retrieval to a specific uploaded file,
+document, URL, or knowledge source.
+
+Examples:
+- file_name like 'ml_notes.pdf'
+
+- file_hash if available.
+"""
+    )
+    num_docs:int = Field(
+            default=7,
+            ge=4,
+            le=15,
+            description="""
+    Number of document chunks to retrieve.
+    
+    Guidelines:
+    - 4-6: precise factual retrieval
+    - 7-10: explanatory or moderate complexity
+    - 11-15: broad or multi-step reasoning
+    """)
+
+class InfoFetcher_node(BaseModel):
+    user_query:Optional[str] = Field(description="""
+The EXACT original latest user message.
+
+This field MUST preserve the user's raw query exactly as written,
+including:
+- wording
+- tone
+- grammar mistakes
+- spelling mistakes
+- punctuation
+- formatting
+- conversational phrasing
+
+DO NOT:
+- rewrite
+- summarize
+- optimize
+- clean
+- expand
+- interpret
+- simplify
+- convert into a retrieval query
+
+This field is used for:
+- conversational continuity
+- debugging
+- observability
+- agent routing
+- traceability
+- preserving original user intent
+
+Examples:
+
+User says:
+"waht backend framework i mostly use ?"
+
+Return:
+"waht backend framework i mostly use ?"
+
+NOT:
+"What backend framework do I usually use?"
+
+User says:
+"search my pdf for bert fine tuning"
+
+Return:
+"search my pdf for bert fine tuning"
+
+NOT:
+"Find BERT fine-tuning information in uploaded documents."
+""")
+
+    user_memories_retrieval_details: Optional[
+        List[FetchUserMemoryDetails]
+    ] = Field(
+        default=None,
+        description="""User-memory retrieval execution plans.
+
+Use this field ONLY when personalized retrieval
+from long-term user memory is required.
+
+Examples:
+- preferences
+- habits
+- goals
+- projects
+- learning style
+- conversational continuity
+
+Rules:
+- Each retrieval object should focus on ONE category
+- Prefer focused retrieval plans over broad queries
+- Keep queries short and intent-focused
+- Multiple retrieval plans are allowed
+
+Return null when memory retrieval is unnecessary.
+"""
+    )
+    uploaded_documents_retrieval_details: Optional[
+        List[FetchUploadedDocsDetails]
+        ] = Field(
+        default=None,
+        description="""Document retrieval execution plans.
+
+Use this field ONLY when retrieval from uploaded
+documents, PDFs, notes, URLs, or vector databases
+is required.
+
+Rules:
+- Each object represents one retrieval strategy
+- Multiple retrieval plans are allowed
+- Keep search queries concise and semantic
+- Use filter_by_source only when useful
+- Prefer similarity for precision
+- Prefer mmr for broader context diversity
+
+Return null when document retrieval is unnecessary.
+"""
+    )
+
+
+
+def infofetcher_node(state: ChatBotState) :
+    """
+    Node that inspects the conversation and populates state with
+    InfoFetcher_node parameters (user_query, memory plans, doc plans).
+    Routing decisions are left entirely to downstream edges/nodes.
+    """
+    messages        = state["messages"]
+    system_message  = state["system_messages"]
+    summary         = state["summary"]["summary_content"]
+
+    # ── build conversation string ────────────────────────────────────────────
+    def _fmt(msgs):
+        return "\n".join(
+            f"{'human' if isinstance(m, HumanMessage) else 'ai'}: {m.content}"
+            for m in msgs
+            if isinstance(m, (HumanMessage, AIMessage))
+        )
+    def _fmt_retrieval_scope(retrieval_types: list[str]) -> str:
+        """
+        Converts the retrieval_types list from state into a
+        clear plain-English scope block for the prompt.
+
+        Example inputs → outputs:
+        ["user_memories"]
+            → "- user_memories : populate user_memories_retrieval_details only"
+
+        ["uploaded_documents"]
+            → "- uploaded_documents : populate uploaded_documents_retrieval_details only"
+
+        ["user_memories", "uploaded_documents"]
+            → "- user_memories    : populate user_memories_retrieval_details
+            - uploaded_documents : populate uploaded_documents_retrieval_details"
+        """
+        descriptions = {
+            "user_memories": (
+                "user_memories         → populate user_memories_retrieval_details"
+            ),
+            "uploaded_documents": (
+                "uploaded_documents    → populate uploaded_documents_retrieval_details"
+            ),
+        }
+        lines = [descriptions[t] for t in retrieval_types if t in descriptions]
+        return "\n".join(f"- {line}" for line in lines)
+
+    if len(messages) <= 1:
+        conversation = "No conversation history yet."
+    elif summary:
+        last_idx     = state["summary"]["summary_end_index"]
+        tail_msgs    = messages[last_idx:-1]
+        conversation = (
+            "(summary of previous conversation)\n"
+            + summary
+            + "\n(later conversation)\n"
+            + _fmt(tail_msgs)
+        )
+    else:
+        conversation = _fmt(messages[:-1])
+
+    # ── LLM call ─────────────────────────────────────────────────────────────
+    parser = PydanticOutputParser(pydantic_object=InfoFetcher_node)
+
+    prompt = PromptTemplate(
+    template="""
+You are a retrieval planning system.
+
+Retrieval has already been confirmed as necessary.
+Your ONLY job is to fill in the retrieval parameters as precisely as possible.
+
+━━━ Retrieval scope (already decided) ────────────────────────────────────
+{retrieval_scope}
+
+Only populate the fields that match the scope above.
+Ignore and leave null any field not listed in the scope.
+
+━━━ user_query ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Copy the EXACT latest user message here, character-for-character.
+Never rewrite, clean, or summarise it.
+
+━━━ user_memories_retrieval_details ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Populate ONLY if "user_memories" is listed in the retrieval scope above.
+
+Covers: preferences · habits · goals · projects · skills ·
+        learning style · conversational continuity · past decisions
+
+Rules:
+- One FetchUserMemoryDetails object per memory category
+- search_query must be optimised for retrieval — NOT a copy of user_query
+- Choose the single most relevant filter_by_type per object
+- Prefer multiple focused objects over one broad query
+
+━━━ uploaded_documents_retrieval_details ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+Populate ONLY if "uploaded_documents" is listed in the retrieval scope above.
+
+Covers: uploaded files · PDFs · URLs · notes · vector-stored knowledge bases
+
+Rules:
+- One FetchUploadedDocsDetails object per retrieval strategy
+- search_query must be a concise semantic query — NOT a copy of user_query
+- Use "similarity" for precise, targeted lookup
+- Use "mmr" when broader or more diverse context is needed
+- Set filter_by_source only when a specific file or source is clearly implied
+
+━━━ Query optimisation rules (both fields) ──────────────────────────────
+- search_query is NEVER a copy of user_query
+- Remove conversational filler ("can you", "please", "I want to know")
+- Preserve key entities, concepts, and intent
+- Keep queries short and retrieval-focused
+
+━━━ System message ────────────────────────────────────────────────────────
+{system_message}
+
+━━━ Conversation ──────────────────────────────────────────────────────────
+{conversation}
+
+━━━ Latest user query ─────────────────────────────────────────────────────
+{query}
+
+{format_instructions}
+""",
+        input_variables=["conversation", "system_message", "query"],
+        partial_variables={"format_instructions": parser.get_format_instructions()},
+    )
+
+    chain    = prompt | llm_summarizer | parser
+    result: InfoFetcher_node = chain.invoke({
+        "retrieval_scope":_fmt_retrieval_scope(state["retrieval_type"]),
+        "conversation":   conversation,
+        "system_message": system_message,
+        "query":          messages[-1].content,
+    })
+
+    # ── write into state ──────────────────────────────────────────────────────
+    # user_query: fall back to the raw message if the LLM somehow left it blank
+    state["retrieval_details"]["user_msg"] = (
+        result.user_query or messages[-1].content
+    )
+
+    if result.user_memories_retrieval_details:
+        state["retrieval_details"]["user_memories"] = (
+            result.user_memories_retrieval_details
+        )
+
+    if result.uploaded_documents_retrieval_details:
+        state["retrieval_details"]["rag_details"] = (
+            result.uploaded_documents_retrieval_details
+        )
+
+    return {
+        "trace":update_trace(state,"Retrieval Decision stage 1")
+    }
+
+
 #  docs
 def rag_result(vector_store,search_query,top_k,search_type,source):# This function performs a retrieval-augmented generation (RAG) process by querying the vector store with the provided search query and parameters. It constructs the search parameters based on whether a specific source filter is applied, retrieves relevant documents using the retriever, and then uses the summarization LLM to analyze the retrieved content in relation to the user's query. The prompt instructs the model to determine if the retrieved information is relevant and useful for answering the query, and to provide a concise answer based solely on that information, or to indicate if no relevant information is available.
     if source:
@@ -727,7 +1076,7 @@ async def retrieve_user_memory_node(state: ChatBotState, store: BaseStore): # Th
         )
         query_results.append(fetched_result)
     result = "\n\n".join(query_results)
-    result = f"""
+    result_message = f"""
 These are newly retrieved memories related to the current user query.
 
 User query:
@@ -739,6 +1088,48 @@ Retrieved memories:
 Use these memories only if they are helpful and relevant for answering the user query.
 If the retrieved memories seem unrelated or not useful, ignore them.
 """
+    system_messages = state['system_messages']
+    if len(system_messages)>1:
+        old_memories = state["system_messages"][-1].content
+        new_memories = result_message
+        prompt = f"""Your work is to summarize the old and new memories system message.
+        rule:
+        - generate A clear Summary.
+        - remove duplicate information.
+
+        old message : {old_memories}
+
+
+        new message : {new_memories}
+
+        summary output:
+        """
+        response = await llm_summarizer.invoke(prompt)
+        system_messages[-1] =SystemMessage(content=response.content)
+        return {
+            "system_messages": system_messages
+            }
+
+    if len(result_message) > 800:
+        prompt = f"""
+You are a memory summariser.
+
+You will receive a list of retrieved user memories.
+Your job is to compress them into a single dense summary
+that will be injected into a chat assistant's context.
+
+Rules:
+- Maximum 500 characters — hard limit, never exceed it
+- Every word must earn its place — no filler, no repetition
+- Preserve concrete facts: names, numbers, tools, preferences, decisions
+- Drop vague or low-signal memories (e.g. "user likes things to be simple")
+- Write in third person, present tense ("User prefers...", "User is building...")
+- Output ONLY the summary — no labels, no preamble, no explanation
+
+Memories:
+{result_message}
+"""
+
     update_system_msg = state["system_messages"]+[SystemMessage(content=result)]
     return {
         "system_messages": update_system_msg

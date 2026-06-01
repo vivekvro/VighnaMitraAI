@@ -60,6 +60,7 @@ async def post_chat_response(req:UserDetails):
                 "summary_content": "",
                 "summary_end_index": 0
             },
+            "retrieval_type":None,
             "retrieval_details": None,
             "user_details": {
                 "user_id": req.user_id,

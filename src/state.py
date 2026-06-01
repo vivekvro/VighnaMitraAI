@@ -1,5 +1,5 @@
 from pydantic import Field
-from typing import TypedDict,Annotated,List,Optional,Any
+from typing import TypedDict,Annotated,List,Optional,Any,Literal
 from langchain_core.messages import BaseMessage,SystemMessage
 from langgraph.graph.message import add_messages
 
@@ -25,6 +25,7 @@ class Retrieval_schema(TypedDict):
 class ChatBotState(BaseChatState):
     summary:SummaryState
     retrieval_details:Optional[Retrieval_schema]
+    retrieval_type: List[Literal["uploaded_documents","user_memories"]] | None
     retriever_context_message:Optional[SystemMessage]
     user_details:UserDetails
     trace:List[str]=Field(
