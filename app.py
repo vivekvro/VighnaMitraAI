@@ -17,7 +17,6 @@ from langchain_core.messages import HumanMessage
 # Local
 from src.encrypt import ComparePasswords
 from src.user_auth import (
-    create_accounts_info_table,
     insert_account_info,
     check_if_email_exists,
     check_if_user_exists,

@@ -18,11 +18,12 @@ from src.chatbots.nodes import (
     remember_node,
     initialize_mcp_tools,
     summarize_conversation,
+    retrieval_info_fetcher_node,
     retriever_node,
     retrieve_user_memory_node,
 )
 from src.chatbots.node_conditions import (
-        memory_router
+        retrieval_router,route_retrieval_type
     )
 # --------------------------------------------------------------------------------------
 
@@ -48,7 +49,11 @@ async def base_chatbot():
     builder_graph.add_node("chat_node", chat_node)
     builder_graph.add_node("tool_node", tool_node)
     builder_graph.add_node("summarize_node", summarize_conversation)
+
+
     builder_graph.add_node("remember_node", remember_node)
+
+    builder_graph.add_node("retrieval_info_fetcher_node",retrieval_info_fetcher_node)
     builder_graph.add_node("retriever_node", retriever_node)
     builder_graph.add_node("retrieve_user_memory_node", retrieve_user_memory_node)
 
@@ -56,10 +61,13 @@ async def base_chatbot():
     builder_graph.add_edge(START, "init_SystemMessage")
     builder_graph.add_edge("init_SystemMessage", "system_message_summarizer_node")
     # Conditional edges from system_message_summarizer_node based on MemoryCondition
-    builder_graph.add_conditional_edges("system_message_summarizer_node", memory_router, {
-        "uploaded_documents": "retriever_node",
-        "user_memories":"retrieve_user_memory_node",
+    builder_graph.add_conditional_edges("system_message_summarizer_node", retrieval_router, {
+        "need_retrieval": "retrieval_info_fetcher_node",
         "chat_node": "summarize_node"
+    })
+    builder_graph.add_conditional_edges("retrieval_info_fetcher_node",route_retrieval_type,{
+        "user_memories":"retrieve_user_memory_node",
+        "uploaded_documents":"retriever_node"
     })
 
     builder_graph.add_edge("summarize_node", "chat_node")
@@ -74,8 +82,6 @@ async def base_chatbot():
     builder_graph.add_edge("tool_node", "chat_node")
 
     builder_graph.add_edge("remember_node", END)
-
-
 
     postgres_conn = await AsyncConnection.connect(
         conninfo=DB_POSTGRES_URL,

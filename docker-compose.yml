@@ -1,7 +1,4 @@
 services:
-
-
-
   postgres:
     image: pgvector/pgvector:pg16 #old :postgres:16
     environment:
@@ -20,7 +17,7 @@ services:
     ports:
       - "8009:8009"
     volumes:
-    - ./expense_records:/app/data
+    - ./expense_data:/app/data
   app:
     build:
       context: .

@@ -1,4 +1,4 @@
-import sqlite3
+
 import psycopg
 import re,os
 from src.encrypt import PasswordEncoder,ComparePasswords
@@ -6,13 +6,6 @@ from textwrap import dedent
 from dotenv import load_dotenv
 load_dotenv()
 DB_PATH = os.getenv('DB_POSTGRES_URL')
-
-
-
-
-
-
-#------------------------ Create Table -------------------------------
 
 #------------------------ password -------------------------------
 
