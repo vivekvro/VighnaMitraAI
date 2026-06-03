@@ -42,7 +42,7 @@ async def base_chatbot():
 
     
     #While only a few MCP tools are included, they demonstrate my capability to build MCP servers and implement custom tool logic
-    _,tool_node = await initialize_mcp_tools("expense_tracker") 
+    _,tool_node = await initialize_mcp_tools()
 
     builder_graph.add_node("init_SystemMessage", init_SystemMessage)
     builder_graph.add_node("system_message_summarizer_node", system_message_summarizer_node)

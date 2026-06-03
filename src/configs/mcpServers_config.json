@@ -1,6 +1,6 @@
 {
-  "expense_tracker":{
-    "url": "http://localhost:8009/mcp",
-    "transport": "http"
-  }
+    "expense_tracker":{
+        "url": "http://mcp-server:8009/mcp",
+        "transport": "http"
+    }
 }

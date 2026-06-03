@@ -61,7 +61,11 @@ async def post_chat_response(req:UserDetails):
                 "summary_end_index": 0
             },
             "retrieval_type":None,
-            "retrieval_details": None,
+            "retrieval_details": {
+                "user_msg":"",
+                "rag_details":[],
+                "user_memories":[]
+                },
             "user_details": {
                 "user_id": req.user_id,
                 "user_memory": None
@@ -77,7 +81,10 @@ async def post_chat_response(req:UserDetails):
                 }
             }
     except Exception as e:
-        return {"error":str(e)}
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+            )
 
 @app.get("/chat/history")
 async def get_history_messages(thread_id:str):
@@ -101,7 +108,10 @@ async def get_history_messages(thread_id:str):
                     }
         }
     except Exception as e:
-        return HTTPException
+        raise HTTPException(
+            status_code=500,
+            detail=str(e)
+            )
 
 @app.get("/thread_ids")
 async def get_all_threads(user_id: str):
@@ -167,14 +177,14 @@ async def load_tempfile_path(upload_file:UploadFile):
 @app.post("/upload")
 async def upload(file:UploadFile=File(...),thread_id:str=Form(...),user_id:str=Form(...)):
     try:
-        file_type= MIME_TO_EXTENSION[file.type]
+        file_type= MIME_TO_EXTENSION[file.content_type]
         temp_fila_path = await load_tempfile_path(file)
         loader = DocLoader(doctype=file_type,path=temp_fila_path)
         docs = loader.load()
 
         if not docs:
             raise HTTPException(status_code=500,detail="NO document is loaded")
-        if update_vectorstore(docs=docs,user_id=file.user_id):
+        if update_vectorstore(docs=docs,user_id=user_id):
             return {"response":"Uploaded Successfully"}
         else:
             return {"response":"something went wrong."}

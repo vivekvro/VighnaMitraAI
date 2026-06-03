@@ -39,16 +39,15 @@ _tools_cache = None# global cache for tools to avoid redundant loading across no
 _llm_with_tools = None# global variable to hold the LLM instance bound with tools, allowing us to reuse the same tool-enabled LLM across different nodes without needing to re-bind it multiple times, which can be inefficient. This ensures that once we initialize the LLM with tools, we can easily access it whenever needed in the conversation flow.
 _tool_node = None# global variable to hold the initialized ToolNode instance, allowing us to reuse the same node across different parts of the conversation flow without needing to re-initialize it multiple times. This ensures that once we set up the ToolNode with the retrieved tools, we can easily access it whenever we need to invoke tool-related actions in the conversation.
 
-async def initialize_mcp_tools(servers_name:str):# This function initializes the tools from the MCP client and binds them to the LLM. It uses global variables to cache the tools, the LLM with tools, and the ToolNode instance, ensuring that we only load and bind the tools once per conversation session for efficiency. If the tools are already cached, it simply returns the existing LLM with tools and ToolNode instance.
+async def initialize_mcp_tools():# This function initializes the tools from the MCP client and binds them to the LLM. It uses global variables to cache the tools, the LLM with tools, and the ToolNode instance, ensuring that we only load and bind the tools once per conversation session for efficiency. If the tools are already cached, it simply returns the existing LLM with tools and ToolNode instance.
     global _tools_cache, _llm_with_tools, _tool_node
 
     if _tools_cache is None:
         mcp_config = await load_config()
 
-        expense_tracker_server = mcp_config[servers_name]
 
 
-        client = MultiServerMCPClient(expense_tracker_server)
+        client = MultiServerMCPClient(mcp_config)
 
         _tools_cache = await asyncio.wait_for(
             client.get_tools(),
@@ -313,9 +312,16 @@ async def chat_node(state: ChatBotState):
     last_messages = state['messages'][last_summarized_index:]
     system_messages = state['system_messages']
 
+    
+
+    messages = []
+
+    # system
+    messages.extend(system_messages)
+
     if state.get("retriever_context_message"):
         messages.append(state["retriever_context_message"])
-        response = await llm.ainvoke(system_messages[0] + state['retriever_context_message'])
+        response = await llm.ainvoke(messages)
         return {
         "messages": [response],
         "retrieval_type":None,
@@ -323,11 +329,6 @@ async def chat_node(state: ChatBotState):
         "retriever_context_message": None,
         "trace": trace
     }
-
-    messages = []
-
-    # system
-    messages.extend(system_messages)
 
     if state['summary']['summary_content']:
         messages.append(SystemMessage(
@@ -653,7 +654,7 @@ Example
   ]
 }
 """,
-    input_variables=["existing_memory", "last_msgs"],
+    input_variables=["existing_memory", "human_msg"],
     partial_variables={
         "format_instructions": parser.get_format_instructions()
     },

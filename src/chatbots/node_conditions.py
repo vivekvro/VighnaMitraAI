@@ -288,9 +288,9 @@ Prefer `False` when uncertain.
     chain = prompt | llm | parser
     result = chain.invoke({"user_query":state['messages'][-1]})
 
-    if not result.requires_retrieval:
+    if result.requires_retrieval:
         return_path = []
-        retrieval_type = result.retrieval_type
+        retrieval_type = result.retrieval_type or set()
         if "user_memories" in retrieval_type:
             return_path.append("user_memories")
         if "uploaded_documents" in retrieval_type:
