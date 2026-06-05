@@ -25,7 +25,7 @@ class Retrieval_schema(TypedDict):
 class ChatBotState(BaseChatState):
     summary:SummaryState
     retrieval_details:Optional[Retrieval_schema]
-    retrieval_type: List[Literal["uploaded_documents","user_memories"]] | None
+    retrieval_type: List[Literal["uploaded_documents","user_memories"]]
     retriever_context_message:Optional[SystemMessage]
     user_details:UserDetails
     trace:List[str]=Field(

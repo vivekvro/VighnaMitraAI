@@ -65,10 +65,8 @@ async def base_chatbot():
         "need_retrieval": "retrieval_info_fetcher_node",
         "chat_node": "summarize_node"
     })
-    builder_graph.add_conditional_edges("retrieval_info_fetcher_node",route_retrieval_type,{
-        "user_memories":"retrieve_user_memory_node",
-        "uploaded_documents":"retriever_node"
-    })
+    builder_graph.add_edge("retrieval_info_fetcher_node","retriever_node")
+    builder_graph.add_edge("retrieval_info_fetcher_node","retrieve_user_memory_node")
 
     builder_graph.add_edge("summarize_node", "chat_node")
     # Conditional edges from chat_node based on tools_condition
@@ -77,8 +75,8 @@ async def base_chatbot():
         "__end__": "remember_node"
     })
     # feeding retrieved information back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
-    builder_graph.add_edge("retriever_node", "system_message_summarizer_node")# feeding retrieved information back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
-    builder_graph.add_edge("retrieve_user_memory_node", "system_message_summarizer_node")# feeding retrieved user memory back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
+    builder_graph.add_edge("retriever_node", "chat_node")# feeding retrieved information back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
+    builder_graph.add_edge("retrieve_user_memory_node", "chat_node")# feeding retrieved user memory back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
     builder_graph.add_edge("tool_node", "chat_node")
 
     builder_graph.add_edge("remember_node", END)

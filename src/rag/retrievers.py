@@ -1,30 +1,33 @@
 from langchain_community.vectorstores import FAISS
-from langchain_community.embeddings import HuggingFaceBgeEmbeddings
+from langchain_community.embeddings import HuggingFaceEmbeddings
 from pathlib import Path
 from dotenv import load_dotenv
 load_dotenv()
 
-embedding = HuggingFaceBgeEmbeddings()
+embedding = HuggingFaceEmbeddings(
+    model_name="BAAI/bge-large-en-v1.5",
+    model_kwargs={"device": "cpu"},
+    encode_kwargs={"normalize_embeddings": True}
+    )
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 VECTORSTORE_DIR_PATH = BASE_DIR / "data" / "vectorstore"
 
 
-def get_vectorstore_path(user_id: str):
-    return VECTORSTORE_DIR_PATH / user_id
+def get_vectorstore_path(user_id: str,thread_id:str):
+    return VECTORSTORE_DIR_PATH / user_id /thread_id
 
 
-def create_vectorstore(user_id: str, docs):
-    path = get_vectorstore_path(user_id)
-    
+def create_vectorstore(user_id: str, docs,thread_id:str):
+    path = get_vectorstore_path(user_id=user_id,thread_id=thread_id)
 
     vectorstore = FAISS.from_documents(docs, embedding=embedding)
     vectorstore.save_local(str(path))
     return vectorstore
 
 
-def load_vectorstore(user_id: str):
-    path = get_vectorstore_path(user_id)
+def load_vectorstore(user_id: str,thread_id:str):
+    path = get_vectorstore_path(user_id=user_id,thread_id=thread_id)
 
     if not path.exists():
         return None
@@ -38,16 +41,17 @@ def load_vectorstore(user_id: str):
         print(f"load error: {e}")
         return None
 
-def update_vectorstore(docs, user_id: str):
-    try:
-        path = get_vectorstore_path(user_id)
-        vectorstore = load_vectorstore(user_id)
-
-        if not docs:
+def update_vectorstore(docs, user_id: str,thread_id:str):
+    if not docs:
             return False
+    try:
+        path = get_vectorstore_path(user_id=user_id,thread_id=thread_id)
+        vectorstore = load_vectorstore(user_id=user_id,thread_id=thread_id)
+
+        
 
         if vectorstore is None:
-            create_vectorstore(user_id, docs)
+            create_vectorstore(user_id=user_id,thread_id=thread_id,docs=docs)
         else:
             vectorstore.add_documents(docs)
             vectorstore.save_local(str(path))
@@ -57,18 +61,3 @@ def update_vectorstore(docs, user_id: str):
     except Exception as e:
         print(f"Vectorstore update error: {e}")
         return False
-
-
-
-# def get_RetrievalQA(retriever):
-#     return RetrievalQA.from_chain_type(llm=ChatGroq(model="llama-3.3-70b-versatile"),retriever=retriever)
-
-
-
-# user langchain.chains.retrieval_qa.base import RetrievalQA
-#RetrievalQA.from_chain_type(llm=llm,retriever=retriever)
-
-
-
-# if __name__=="__main__":
-#     print(str(VECTORSTORE_DIR_PATH))

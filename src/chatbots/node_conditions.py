@@ -245,8 +245,6 @@ Options:
     )
 
 def retrieval_router(state: ChatBotState):
-    if state['retrieval_type']:
-        return "chat_node"
     parser=PydanticOutputParser(pydantic_object=Memory_Router_Condition)
     prompt = PromptTemplate(
         template="""You are a retrieval router.
@@ -286,7 +284,7 @@ Prefer `False` when uncertain.
     }
     )
     chain = prompt | llm | parser
-    result = chain.invoke({"user_query":state['messages'][-1]})
+    result = chain.invoke({"user_query":state['messages'][-1].content})
 
     if result.requires_retrieval:
         return_path = []
@@ -303,7 +301,3 @@ Prefer `False` when uncertain.
         return "need_retrieval"
     else:
         return "chat_node"
-
-
-def route_retrieval_type(state: ChatBotState):
-    return state["retrieval_type"]

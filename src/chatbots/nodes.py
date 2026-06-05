@@ -1,20 +1,19 @@
-# =======================
 # Standard Library
-import os, asyncio, datetime, dotenv
+import os, asyncio, datetime, dotenv, asyncpg
 from uuid import uuid4
 from typing import List,Optional,Literal
-
 # Third-party Libraries
- 
 from pydantic import BaseModel, Field
 from langchain_core.messages import HumanMessage, ToolMessage, SystemMessage,AIMessage
 from langchain_core.messages.utils import count_tokens_approximately
 from langchain_core.prompts import PromptTemplate
 from langchain_core.output_parsers import PydanticOutputParser
 from langgraph.store.base import BaseStore
-from langgraph.store.postgres import PostgresStore
+from langgraph.store.postgres.aio import AsyncPostgresStore
 from langgraph.prebuilt import ToolNode
 from langchain_mcp_adapters.client import MultiServerMCPClient
+from langchain_community.vectorstores import VectorStore
+from langchain_core.runnables import RunnableConfig
 # Local Project Imports
 from src.LLMs.load_llm import llama3_4b, gpt_oss_120b
 from src.state import ChatBotState
@@ -25,12 +24,9 @@ from src.configs.config_methods import load_config
 dotenv.load_dotenv()
 DB_POSTGRESSTORE_PATH = os.getenv("DB_POSTGRES_URL")
 
-
 #----------------LLMs Setups -------------------------
 llm_summarizer = llama3_4b()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
 llm = gpt_oss_120b()# i am using this for token size efficiency, but you can choose any capable model here, ideally the same one used for the main conversation to maintain consistency in response style and capabilities. Adjust based on your specific requirements and token limits.
-#-----------------------------------------------
-
 #-----------------------ToolNode------------------------------------
 
 
@@ -75,9 +71,7 @@ def update_trace(state,node_name:str |list[str]):
 def get_current_date():
     return str(datetime.datetime.today()).split(" ")
 #------------------- init System Message memory ------------------------
-
-SYSTEM_PROMPT_TEMPLATE = """You are VighnaMitra, an AI friend (not an assistant).
-
+SYSTEM_PROMPT_TEMPLATE = """
     Basic info:
     - datetime: {datetime}
     - user_id: {user_id}
@@ -121,6 +115,7 @@ knowledge, available tools, and their personal context where appropriate.
     {user_details_content}
 """
 
+from psycopg import AsyncConnection
 
 
 
@@ -136,8 +131,6 @@ async def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str
     return f"({filter_by_type})\n" +fetch_data
 
 
-
-# this node is responsible for initializing the system message with relevant user information and memories. It retrieves various types of memories from the vector store based on predefined queries, formats them, and constructs a comprehensive system message that sets the context for the conversation. This ensures that the LLM has access to important user details and relevant information right from the start, guiding its responses and interactions effectively throughout the conversation.
 async def init_SystemMessage(state: ChatBotState, store: BaseStore):
     # Initialize the system message with basic user information,
     # relevant memories, and core behavioral instructions for the LLM
@@ -151,8 +144,7 @@ async def init_SystemMessage(state: ChatBotState, store: BaseStore):
     memory_queries = {
         "personal": [
         "What is the user's name?",
-        "What basic personal details are known about the user?",
-        "What important identity-related info is available about the user?"
+        "What basic personal details are known about the user?"
     ],
 
     "habit": [
@@ -163,8 +155,7 @@ async def init_SystemMessage(state: ChatBotState, store: BaseStore):
 
     "interests": [
         "What topics is the user interested in?",
-        "What technologies or fields does the user enjoy learning?",
-        "What hobbies or interests does the user have?"
+        "What technologies or fields does the user enjoy learning?"
     ],
 
     "goals": [
@@ -319,9 +310,9 @@ async def chat_node(state: ChatBotState):
     # system
     messages.extend(system_messages)
 
-    if state.get("retriever_context_message"):
-        messages.append(state["retriever_context_message"])
-        response = await llm.ainvoke(messages)
+    if state["retriever_context_message"]:
+        context_message = state["retriever_context_message"]
+        response = await llm.ainvoke(context_message)
         return {
         "messages": [response],
         "retrieval_type":None,
@@ -339,7 +330,7 @@ async def chat_node(state: ChatBotState):
         messages.extend(last_messages)
 
 
-    llm_with_tools, _ = await initialize_mcp_tools("expense_tracker")
+    llm_with_tools, _ = await initialize_mcp_tools()
     response = await llm_with_tools.ainvoke(messages)
 
     return {
@@ -660,7 +651,7 @@ Example
     },
 )
     chain = prompt_template | llm_summarizer | parser
-    decision = chain.invoke(
+    decision = await chain.ainvoke(
         {
             "existing_memory": existing_memory,
             "human_msg": human_msg
@@ -677,24 +668,27 @@ Example
     if not new_unique_memories:
         return state
     dt= get_current_date()
-    with PostgresStore.from_conn_string(
+    async with  AsyncPostgresStore.from_conn_string(
         DB_POSTGRESSTORE_PATH,
-        index={
-        "embed": embedding,
-        "dims": 1024
-    }
-        ) as put_store:
-        put_store.setup()
-        for mem in new_unique_memories:
-            put_store.put(
-                namespace,
-                str(uuid4()),
-                {
-                    "data": mem.memory,
-                    "type":mem.memory_type,
-                    "date": dt[0],
-                    "time": dt[1]
-                    }
+        index={"embed": embedding,
+            "dims": 1024}) as put_store:
+
+
+        await put_store.setup()
+        await asyncio.gather(
+            *[
+                put_store.aput(
+                    namespace,
+                    str(uuid4()),
+                    {
+                        "data": mem.memory,
+                        "type": mem.memory_type,
+                        "date": dt[0],
+                        "time": dt[1],
+                        },
+                        )
+                        for mem in new_unique_memories
+            ]
             )
 
     # 🔹 6. Return state unchanged + trace
@@ -895,69 +889,74 @@ Return null when document retrieval is unnecessary.
 """
     )
 
-def retrieval_info_fetcher_node(state: ChatBotState) :
+
+
+async def get_document_summaries(
+    conn: AsyncConnection,
+    user_id: str,
+    thread_id: str,
+) -> str:
+    async with conn.cursor() as cur:
+        await cur.execute(
+            """
+            SELECT file_hash, summary
+            FROM uploaded_documents
+            WHERE user_id = %s
+              AND thread_id = %s
+            ORDER BY uploaded_at
+            """,
+            (user_id, thread_id),
+        )
+
+        rows = await cur.fetchall()
+
+    return "\n\n".join(
+        f"Source: {file_hash}\nSummary: {summary or 'No summary available'}"
+        for file_hash, summary in rows
+    )
+
+
+
+
+async def retrieval_info_fetcher_node(state: ChatBotState,config: RunnableConfig):
     """
     Node that inspects the conversation and populates state with
     InfoFetcher_node parameters (user_query, memory plans, doc plans).
     Routing decisions are left entirely to downstream edges/nodes.
     """
-    messages        = state["messages"]
-    system_message  = state["system_messages"]
-    summary         = state["summary"]["summary_content"]
 
-    # ── build conversation string ────────────────────────────────────────────
-    def _fmt(msgs):
-        return "\n".join(
-            f"{'human' if isinstance(m, HumanMessage) else 'ai'}: {m.content}"
-            for m in msgs
-            if isinstance(m, (HumanMessage, AIMessage))
-        )
-    def _fmt_retrieval_scope(retrieval_types: list[str]) -> str:
-        """
-        Converts the retrieval_types list from state into a
-        clear plain-English scope block for the prompt.
+    message = state["messages"][-1] if  isinstance(state["messages"][-1],HumanMessage) else "no"
+    try:
+        async with await AsyncConnection.connect(DB_POSTGRESSTORE_PATH) as conn:
+            source = await get_document_summaries(
+                conn,
+                state["user_id"],
+                state["thread_id"],
+            )
+    except:
+        source = "(empty)"
 
-        Example inputs → outputs:
-        ["user_memories"]
-            → "- user_memories : populate user_memories_retrieval_details only"
-
-        ["uploaded_documents"]
-            → "- uploaded_documents : populate uploaded_documents_retrieval_details only"
-
-        ["user_memories", "uploaded_documents"]
-            → "- user_memories    : populate user_memories_retrieval_details
-            - uploaded_documents : populate uploaded_documents_retrieval_details"
-        """
-        descriptions = {
-            "user_memories": (
-                "user_memories         → populate user_memories_retrieval_details"
-            ),
-            "uploaded_documents": (
-                "uploaded_documents    → populate uploaded_documents_retrieval_details"
-            ),
-        }
-        lines = [descriptions[t] for t in retrieval_types if t in descriptions]
-        return "\n".join(f"- {line}" for line in lines)
-
-    if len(messages) <= 1:
-        conversation = "No conversation history yet."
-    elif summary:
-        last_idx     = state["summary"]["summary_end_index"]
-        tail_msgs    = messages[last_idx:-1]
-        conversation = (
-            "(summary of previous conversation)\n"
-            + summary
-            + "\n(later conversation)\n"
-            + _fmt(tail_msgs)
-        )
-    else:
-        conversation = _fmt(messages[:-1])
+    if message =="no":
+        return {
+        "retrieval_details":{
+            "user_msg": "",
+            "rag_details":[],
+            "user_memories": []
+        }}
+    system_message  = state["system_messages"][0]
+    retrieval_type = state['retrieval_type']
+    retrieval_scope = ""
+    if "uploaded_documents" in retrieval_type:
+        retrieval_scope = retrieval_scope + "- retrieve from uploaded documents"
+    if "user_memories" in retrieval_type:
+        retrieval_scope = retrieval_scope + "- retrieve from user memories"
 
     # ── LLM call ─────────────────────────────────────────────────────────────
     parser = PydanticOutputParser(pydantic_object=InfoFetcher_node)
 
     prompt = PromptTemplate(
-    template="""
+    template=
+    """
 You are a retrieval planning system.
 
 Retrieval has already been confirmed as necessary.
@@ -1006,65 +1005,55 @@ Rules:
 ━━━ System message ────────────────────────────────────────────────────────
 {system_message}
 
-━━━ Conversation ──────────────────────────────────────────────────────────
-{conversation}
+
+━━━ available sources ────────────────────────────────────────────────────────
+{source}
 
 ━━━ Latest user query ─────────────────────────────────────────────────────
 {query}
 
 {format_instructions}
-""",
-        input_variables=["conversation", "system_message", "query"],
-        partial_variables={"format_instructions": parser.get_format_instructions()},
+"""
+    ,
+    input_variables=["conversation","source", "system_message", "query"],
+    partial_variables={"format_instructions": parser.get_format_instructions()},
     )
 
     chain    = prompt | llm_summarizer | parser
     result: InfoFetcher_node = chain.invoke({
-        "retrieval_scope":_fmt_retrieval_scope(state["retrieval_type"]),
-        "conversation":   conversation,
-        "system_message": system_message,
-        "query":          messages[-1].content,
+        "retrieval_scope":retrieval_scope,
+        "source":source,
+        "system_message": system_message.content,
+        "query":message.content,
     })
 
-    # ── write into state ──────────────────────────────────────────────────────
-    # user_query: fall back to the raw message if the LLM somehow left it blank
-    state["retrieval_details"]["user_msg"] = (
-        result.user_query or messages[-1].content
-    )
-
-    if result.user_memories_retrieval_details:
-        state["retrieval_details"]["user_memories"] = (
-            result.user_memories_retrieval_details
-        )
-
-    if result.uploaded_documents_retrieval_details:
-        state["retrieval_details"]["rag_details"] = (
-            result.uploaded_documents_retrieval_details
-        )
-
     return {
-        "trace":update_trace(state,"Retrieval Decision stage 1")
-    }
+        "retrieval_details":{
+            "user_msg":result.user_query or message.content,
+            "rag_details":result.uploaded_documents_retrieval_details or [],
+            "user_memories":result.user_memories_retrieval_details or []
+        },
+        "trace":update_trace(state,"Retrieval Decision stage 1")}
 
 #  docs
-def rag_result(vector_store,search_query,top_k,search_type,source):# This function performs a retrieval-augmented generation (RAG) process by querying the vector store with the provided search query and parameters. It constructs the search parameters based on whether a specific source filter is applied, retrieves relevant documents using the retriever, and then uses the summarization LLM to analyze the retrieved content in relation to the user's query. The prompt instructs the model to determine if the retrieved information is relevant and useful for answering the query, and to provide a concise answer based solely on that information, or to indicate if no relevant information is available.
+def rag_result(vector_store:VectorStore,search_query,top_k,search_type,source):# This function performs a retrieval-augmented generation (RAG) process by querying the vector store with the provided search query and parameters. It constructs the search parameters based on whether a specific source filter is applied, retrieves relevant documents using the retriever, and then uses the summarization LLM to analyze the retrieved content in relation to the user's query. The prompt instructs the model to determine if the retrieved information is relevant and useful for answering the query, and to provide a concise answer based solely on that information, or to indicate if no relevant information is available.
     if source:
         search_kwargs={
-            "k":top_k or 8,
+            "k":top_k or 6,
             "filter":{
-                "source": source
+                "file_hash": source
         }
     }
     else:
         search_kwargs={
-            "k":top_k or 8
+            "k":top_k or 6
             }
     retriever = vector_store.as_retriever(
         search_type=search_type,
         search_kwargs=search_kwargs
     )
     result_docs = retriever.invoke(search_query)
-    retrieved_content = "\n".join([doc.page_content for doc in result_docs])
+    retrieved_content = "\n".join([doc.page_content for doc in result_docs]) if result_docs else "(no content retrieved)"
     prompt = f"""
 You are given:
 1. A user query
@@ -1088,15 +1077,22 @@ Answer:
     res = llm_summarizer.invoke(prompt)
     return res.content
 
-def retriever_node(state: ChatBotState):
+def retriever_node(state: ChatBotState,config:RunnableConfig):
+
+    if not state['retrieval_details']['rag_details']:
+        return {
+            "retriever_context_message":""
+        }
+
+    thread_id = config['configurable']['thread_id']
     user_id = state['user_details']['user_id']
     query_list = state['retrieval_details']['rag_details']
     user_msg = state['retrieval_details']['user_msg']
 
-    vector_store = load_vectorstore(user_id)
+    vector_store = load_vectorstore(user_id,thread_id)
     if not vector_store:
         return {
-            "messages":[ToolMessage(content="No vector store available",tool_calls_id=f"tool_id_{uuid4()}")]
+            "messages":[ToolMessage(content="No vector store available",tool_call_id=f"tool_id_{uuid4()}")]
         }
     query_list_result = []
     for query in query_list:
@@ -1144,12 +1140,19 @@ RAG Retrieval Results:
 Final Consolidated Answer:
 """)]
     return {
+        "retrieval_details":{
+            "rag_details" : []
+        },
         "retriever_context_message" : retriever_context_message
     }
 
 # user memories
 async def retrieve_user_memory_node(state: ChatBotState, store: BaseStore): # This node is responsible for retrieving relevant user memories from the vector store based on the current user query and the specified retrieval details. It constructs a consolidated system message that includes the retrieved memories, which can then be used by the LLM to provide more informed and personalized responses to the user's query. The node ensures that only relevant and helpful memories are included in the system message, while ignoring any unrelated or non-useful information.
     query_list = state["retrieval_details"]['user_memories']
+    if not query_list:
+        return {
+        "system_messages": state['system_messages']
+    }
     main_query = state['retrieval_details']['user_msg']
     user_id = state['user_details']['user_id']
     namespace = ("user", user_id, "details")
@@ -1178,12 +1181,14 @@ If the retrieved memories seem unrelated or not useful, ignore them.
 """
     system_messages = state['system_messages']
     if len(system_messages)>1:
-        old_memories = state["system_messages"][-1].content
+        old_memories = system_messages[-1].content
         new_memories = result_message
         prompt = f"""Your work is to summarize the old and new memories system message.
         rule:
+        - max 650 characters,Only most important information allowed for 650+ characters. else hard limit is 650 characters
         - generate A clear Summary.
         - remove duplicate information.
+        - remove unrelated information.
 
         old message : {old_memories}
 
@@ -1200,7 +1205,7 @@ If the retrieved memories seem unrelated or not useful, ignore them.
 
     if len(result_message) > 800:
         prompt = f"""
-You are a memory summariser.
+You are a memory summarizer.
 
 You will receive a list of retrieved user memories.
 Your job is to compress them into a single dense summary

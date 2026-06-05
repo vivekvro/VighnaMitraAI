@@ -282,24 +282,33 @@ def fake_stream_response(text:str):
 
 
 
-if user_input:
+if user_input :
     with st.chat_message(name="user"):
         st.write(user_input)
     with st.spinner("thinking...."):
-        response = requests.post(
-            "http://backend:8005/chat",
-            json={
-                "message":user_input,
-                "user_id":username,
-                "thread_id":st.session_state['user']['chat_id']
-            }
-        )
-        result_state = response.json()['response']
+        try:
+            response = requests.post(
+                "http://backend:8005/chat",
+                json={
+                    "message":user_input,
+                    "user_id":username,
+                    "thread_id":st.session_state['user']['chat_id']
+                }
+            )
+            data = response.json()
+            result_state = data['response']
+        except Exception as e:
+            result_state = {"message":str(e),"trace":['error']}
 
     with st.chat_message(name="assistant"):
         if "trace" in result_state:
             with st.expander("⚙️ Execution Trace"):
                 for step in result_state["trace"]:
                     st.write(step)
-        st.write_stream(fake_stream_response(result_state['messages'][-1].content))
-
+        st.write_stream(fake_stream_response(result_state['message']))
+        if "error" in result_state['trace']:
+            st.write("restarting..")
+            for i in [5,4,3,2,1]:
+                st.write(i)
+                time.sleep(1)
+            st.rerun()

@@ -16,12 +16,6 @@ load_dotenv()
 
 chatbot = None
 
-
-
-
-
-
-
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     global chatbot
@@ -30,19 +24,9 @@ async def lifespan(app: FastAPI):
     yield
     print("APP shutdown")
 
-
-
-
-
-
-
-
-
 #-------------------------------------------------------------------------------
 
-
 app =  FastAPI(lifespan=lifespan)
-
 
 class UserDetails(BaseModel):
     message:str =Field(description="User's Query/Message")
@@ -61,6 +45,7 @@ async def post_chat_response(req:UserDetails):
                 "summary_end_index": 0
             },
             "retrieval_type":None,
+            "retriever_context_message": None,
             "retrieval_details": {
                 "user_msg":"",
                 "rag_details":[],
@@ -184,7 +169,7 @@ async def upload(file:UploadFile=File(...),thread_id:str=Form(...),user_id:str=F
 
         if not docs:
             raise HTTPException(status_code=500,detail="NO document is loaded")
-        if update_vectorstore(docs=docs,user_id=user_id):
+        if update_vectorstore(docs=docs,user_id=user_id,thread_id=thread_id):
             return {"response":"Uploaded Successfully"}
         else:
             return {"response":"something went wrong."}
