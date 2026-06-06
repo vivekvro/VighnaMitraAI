@@ -44,7 +44,7 @@ async def post_chat_response(req:UserDetails):
                 "summary_content": "",
                 "summary_end_index": 0
             },
-            "retrieval_type":None,
+            "retrieval_type":[],
             "retriever_context_message": None,
             "retrieval_details": {
                 "user_msg":"",

@@ -21,7 +21,7 @@ def llama3_4b(temperature=0.7):
     return ChatOllama(
         model="llama3:4b",
         temperature=temperature,
-        base_url="http://localhost:11434"
+        base_url="http://ollama:11434"
         )
 # def gemma4_e4b(temperature=0.7):
 #     load_dotenv()

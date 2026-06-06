@@ -1,6 +1,7 @@
 from langchain_community.vectorstores import FAISS
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from pathlib import Path
+import asyncio
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -8,6 +9,21 @@ embedding = HuggingFaceEmbeddings(
     model_name="BAAI/bge-large-en-v1.5",
     model_kwargs={"device": "cpu"},
     encode_kwargs={"normalize_embeddings": True}
+    )
+
+
+
+async def postgres_embed(texts: list[str]) -> list[list[float]]:
+    """
+    True async wrapper around the blocking HuggingFaceEmbeddings.
+    run_in_executor offloads the CPU work to a thread pool,
+    keeping the asyncio event loop completely free.
+    """
+    loop = asyncio.get_event_loop()
+    return await loop.run_in_executor(
+        None,                        # uses default ThreadPoolExecutor
+        embedding.embed_documents,   # the blocking sync method
+        texts                        # argument to that method
     )
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent

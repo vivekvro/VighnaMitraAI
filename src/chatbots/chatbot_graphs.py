@@ -3,6 +3,7 @@ import os
 import dotenv
 
 # Third-party
+
 from psycopg import AsyncConnection
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -11,6 +12,7 @@ from langgraph.prebuilt import tools_condition
 
 # Local
 from src.state import ChatBotState
+from src.rag.retrievers import postgres_embed
 from src.chatbots.nodes import (
     
     init_SystemMessage,
@@ -33,7 +35,8 @@ dotenv.load_dotenv()
 
 DB_POSTGRES_URL = os.getenv("DB_POSTGRES_URL")
 
-
+def retrieval_join_node(state: ChatBotState):
+    return state
 async def base_chatbot():
 
     
@@ -59,6 +62,7 @@ async def base_chatbot():
     builder_graph.add_node("retrieval_info_fetcher_node",retrieval_info_fetcher_node)
     builder_graph.add_node("retriever_node", retriever_node)
     builder_graph.add_node("retrieve_user_memory_node", retrieve_user_memory_node)
+    builder_graph.add_node("retrieval_join_node", retrieval_join_node)
 
     # Define edges
     builder_graph.add_edge(START, "init_SystemMessage")
@@ -78,11 +82,14 @@ async def base_chatbot():
         "tools": "tools_trace_node",
         "__end__": "remember_node"
     })
-    # feeding retrieved information back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
-    builder_graph.add_edge("retriever_node", "chat_node")# feeding retrieved information back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
-    builder_graph.add_edge("retrieve_user_memory_node", "chat_node")# feeding retrieved user memory back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
     builder_graph.add_edge("tools_trace_node", "tool_node")
     builder_graph.add_edge("tool_node", "chat_node")
+    # feeding retrieved information back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
+    builder_graph.add_edge("retriever_node", "retrieval_join_node")# feeding retrieved information back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
+    builder_graph.add_edge("retrieve_user_memory_node", "retrieval_join_node")# feeding retrieved user memory back into the summarizer to ensure it has the most up-to-date context for generating summaries and guiding the conversation effectively.
+    
+    builder_graph.add_edge("retrieval_join_node", "chat_node")
+
 
     builder_graph.add_edge("remember_node", END)
 
@@ -96,7 +103,12 @@ async def base_chatbot():
     )
 
     #  Store setup
-    store = AsyncPostgresStore(conn=postgres_conn_1)
+    store = AsyncPostgresStore(conn=postgres_conn_1,
+    index={
+        "embed": postgres_embed,
+        "dims": 1024,
+        "text_fields": ["data"]
+    })
     checkpointer = AsyncPostgresSaver(conn=postgres_conn_2)
 
     await store.setup()

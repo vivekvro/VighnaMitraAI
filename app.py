@@ -296,9 +296,8 @@ if user_input :
                 }
             )
             data = response.json()
-            
-            result_state["message"] = data['message']
-            result_state["trace"] = data["trace"]
+            result_state["message"] = data['response']['message']
+            result_state["trace"] = data['response']['trace']
         except Exception as e:
             result_state = {"message":str(e),"trace":['error']}
 

@@ -20,7 +20,7 @@ from langchain_core.runnables import RunnableConfig
 # Local Project Imports
 from src.LLMs.load_llm import llama3_4b, gpt_oss_120b
 from src.state import ChatBotState
-from src.rag.retrievers import load_vectorstore,embedding
+from src.rag.retrievers import load_vectorstore,embedding,postgres_embed
 from src.configs.config_methods import load_config
 # =======================
 
@@ -325,7 +325,7 @@ async def chat_node(state: ChatBotState):
         "messages": [response],
         "retrieval_type":[],
         "retrieval_details":{
-            "user_msg":str,
+            "user_msg":"",
             "rag_details":[],
             "user_memories":[]
         },
@@ -674,10 +674,14 @@ Example
     if not new_unique_memories:
         return state
     dt= get_current_date()
-    async with  AsyncPostgresStore.from_conn_string(
+    async with AsyncPostgresStore.from_conn_string(
         DB_POSTGRESSTORE_PATH,
-        index={"embed": embedding,
-            "dims": 1024}) as put_store:
+        index={
+            "embed": postgres_embed,
+            "dims": 1024,
+            "text_fields": ["data"]   # tells the store which field to embed
+        }) as put_store:
+
 
 
         await put_store.setup()
@@ -1031,7 +1035,6 @@ Rules:
     result: InfoFetcher_node = await chain.ainvoke({
         "retrieval_scope":retrieval_scope,
         "source":source,
-        "retrieval_scope":retrieval_scope,
         "system_message": system_message.content,
         "query":message.content,
     })
@@ -1101,11 +1104,12 @@ async def retriever_node(state: ChatBotState,config:RunnableConfig):
     vector_store = load_vectorstore(user_id,thread_id)
     if not vector_store:
         return {
-            "messages":[ToolMessage(content="No vector store available",tool_call_id=f"tool_id_{uuid4()}")]
-        }
+            "retriever_context_message": SystemMessage(
+                content="No uploaded documents found for this conversation.")
+                }
     query_list_result = []
     for query in query_list:
-        result_rag = rag_result(
+        result_rag = await rag_result(
             vector_store=vector_store,
             search_type=query.retrieval_mode,
             search_query=query.search_query,
