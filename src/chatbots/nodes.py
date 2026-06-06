@@ -1,6 +1,9 @@
 # Standard Library
-import os, asyncio, datetime, dotenv, asyncpg
+import os, asyncio, datetime, dotenv
 from uuid import uuid4
+from psycopg import AsyncConnection
+
+
 from typing import List,Optional,Literal
 # Third-party Libraries
 from pydantic import BaseModel, Field
@@ -114,8 +117,6 @@ knowledge, available tools, and their personal context where appropriate.
     User memory:
     {user_details_content}
 """
-
-from psycopg import AsyncConnection
 
 
 
@@ -309,18 +310,6 @@ async def chat_node(state: ChatBotState):
 
     # system
     messages.extend(system_messages)
-
-    if state["retriever_context_message"]:
-        context_message = state["retriever_context_message"]
-        response = await llm.ainvoke(context_message)
-        return {
-        "messages": [response],
-        "retrieval_type":None,
-        "retrieval_details":None,
-        "retriever_context_message": None,
-        "trace": trace
-    }
-
     if state['summary']['summary_content']:
         messages.append(SystemMessage(
             content=f"last Conversation Summary:\n{state['summary']['summary_content']}"
@@ -328,6 +317,23 @@ async def chat_node(state: ChatBotState):
         messages.extend(last_messages)
     else:
         messages.extend(last_messages)
+
+    if state["retriever_context_message"]:
+        context_message = state["retriever_context_message"]
+        response = await llm.ainvoke(messages + [context_message])
+        return {
+        "messages": [response],
+        "retrieval_type":[],
+        "retrieval_details":{
+            "user_msg":str,
+            "rag_details":[],
+            "user_memories":[]
+        },
+        "retriever_context_message": None,
+        "trace": trace
+    }
+
+    
 
 
     llm_with_tools, _ = await initialize_mcp_tools()
@@ -341,12 +347,12 @@ async def chat_node(state: ChatBotState):
 def tools_trace_node(state: ChatBotState):
     tool_calls =state["messages"][-1].tool_calls
     if tool_calls:
-        tool_names = [call.tool_name for call in tool_calls]
+        tool_names = [call['name'] for call in tool_calls]
         trace = update_trace(state,tool_names)
         return {"trace": trace}
     return state
 #------------------------ summary Nodes ---------------------------
-def system_message_summarizer_node(state: ChatBotState):
+async def system_message_summarizer_node(state: ChatBotState):
     system_messages = state['system_messages']
     if system_messages:
         if sum(len(msg.content) for msg in system_messages) > 1800:
@@ -363,12 +369,12 @@ System Messages:
 {system_content}
 
 """
-            response = llm_summarizer.invoke(prompt)
+            response = await llm_summarizer.ainvoke(prompt)
             return {"system_messages":[SystemMessage(content=response.content)],"trace": trace}
         else:
             return state
 
-def summarize_conversation(state: ChatBotState):
+async def summarize_conversation(state: ChatBotState):
     last_summarized_index = state['summary']['summary_end_index']
     messages = state["messages"][last_summarized_index:]
     if len(messages) > 20  or  count_tokens_approximately(messages) > 1800:
@@ -406,7 +412,7 @@ def summarize_conversation(state: ChatBotState):
             SystemMessage(content=prompt)
         ]
 
-        response = llm_summarizer.invoke(messages_for_summary)
+        response = await llm_summarizer.ainvoke(messages_for_summary)
 
         return {
             "summary":{
@@ -487,7 +493,7 @@ async def remember_node(state: ChatBotState, store: BaseStore):# This node is re
     namespace = ("user", user_id, "details")
 
     # 🔹 1. Fetch existing memory safely
-    items = await store.asearch(namespace)
+    items = await store.asearch(namespace,limit=35)
 
     existing_list = [
         it.value.get("data", "")
@@ -499,13 +505,13 @@ async def remember_node(state: ChatBotState, store: BaseStore):# This node is re
     existing_set = set(existing_list)
 
     # 🔹 2. Prepare last messages context
-    human_msg = state["messages"][-1].content 
+    human_msg = state["messages"][-1].content
 
     # 🔹 3. Build parser + prompt
     parser = PydanticOutputParser(pydantic_object=MemoryDecision)
 
     prompt_template = PromptTemplate(
-    template="""text
+    template="""
 Return ONLY valid JSON.
 
 Schema:
@@ -925,13 +931,16 @@ async def retrieval_info_fetcher_node(state: ChatBotState,config: RunnableConfig
     Routing decisions are left entirely to downstream edges/nodes.
     """
 
+    thread_id = config['configurable']['thread_id']
+    user_id = state['user_details']['user_id']
+
     message = state["messages"][-1] if  isinstance(state["messages"][-1],HumanMessage) else "no"
     try:
         async with await AsyncConnection.connect(DB_POSTGRESSTORE_PATH) as conn:
             source = await get_document_summaries(
-                conn,
-                state["user_id"],
-                state["thread_id"],
+                conn=conn,
+                user_id=user_id,
+                thread_id=thread_id
             )
     except:
         source = "(empty)"
@@ -955,8 +964,7 @@ async def retrieval_info_fetcher_node(state: ChatBotState,config: RunnableConfig
     parser = PydanticOutputParser(pydantic_object=InfoFetcher_node)
 
     prompt = PromptTemplate(
-    template=
-    """
+    template="""
 You are a retrieval planning system.
 
 Retrieval has already been confirmed as necessary.
@@ -1013,16 +1021,17 @@ Rules:
 {query}
 
 {format_instructions}
-"""
-    ,
-    input_variables=["conversation","source", "system_message", "query"],
+""",
+
+    input_variables=["source","retrieval_scope", "system_message", "query"],
     partial_variables={"format_instructions": parser.get_format_instructions()},
     )
 
     chain    = prompt | llm_summarizer | parser
-    result: InfoFetcher_node = chain.invoke({
+    result: InfoFetcher_node = await chain.ainvoke({
         "retrieval_scope":retrieval_scope,
         "source":source,
+        "retrieval_scope":retrieval_scope,
         "system_message": system_message.content,
         "query":message.content,
     })
@@ -1036,7 +1045,7 @@ Rules:
         "trace":update_trace(state,"Retrieval Decision stage 1")}
 
 #  docs
-def rag_result(vector_store:VectorStore,search_query,top_k,search_type,source):# This function performs a retrieval-augmented generation (RAG) process by querying the vector store with the provided search query and parameters. It constructs the search parameters based on whether a specific source filter is applied, retrieves relevant documents using the retriever, and then uses the summarization LLM to analyze the retrieved content in relation to the user's query. The prompt instructs the model to determine if the retrieved information is relevant and useful for answering the query, and to provide a concise answer based solely on that information, or to indicate if no relevant information is available.
+async def rag_result(vector_store:VectorStore,search_query,top_k,search_type,source):# This function performs a retrieval-augmented generation (RAG) process by querying the vector store with the provided search query and parameters. It constructs the search parameters based on whether a specific source filter is applied, retrieves relevant documents using the retriever, and then uses the summarization LLM to analyze the retrieved content in relation to the user's query. The prompt instructs the model to determine if the retrieved information is relevant and useful for answering the query, and to provide a concise answer based solely on that information, or to indicate if no relevant information is available.
     if source:
         search_kwargs={
             "k":top_k or 6,
@@ -1052,7 +1061,7 @@ def rag_result(vector_store:VectorStore,search_query,top_k,search_type,source):#
         search_type=search_type,
         search_kwargs=search_kwargs
     )
-    result_docs = retriever.invoke(search_query)
+    result_docs = await  retriever.ainvoke(search_query)
     retrieved_content = "\n".join([doc.page_content for doc in result_docs]) if result_docs else "(no content retrieved)"
     prompt = f"""
 You are given:
@@ -1074,14 +1083,14 @@ Retrieved Content:
 
 Answer:
 """
-    res = llm_summarizer.invoke(prompt)
+    res = await llm_summarizer.ainvoke(prompt)
     return res.content
 
-def retriever_node(state: ChatBotState,config:RunnableConfig):
+async def retriever_node(state: ChatBotState,config:RunnableConfig):
 
     if not state['retrieval_details']['rag_details']:
         return {
-            "retriever_context_message":""
+            "retriever_context_message":None
         }
 
     thread_id = config['configurable']['thread_id']
@@ -1106,7 +1115,7 @@ def retriever_node(state: ChatBotState,config:RunnableConfig):
         query_list_result.append(f"""Query for RAG: {query.search_query}\nRAG response: {result_rag} \n source: {query.filter_by_source  if query.filter_by_source else "Not mentioned"}""")
 
     total_results = "\n\n".join(query_list_result)
-    retriever_context_message = [SystemMessage(content=f"""
+    retriever_context_message = SystemMessage(content=f"""
 You are a retrieval consolidation system.
 
 You are given:
@@ -1138,7 +1147,7 @@ RAG Retrieval Results:
 {total_results}
 
 Final Consolidated Answer:
-""")]
+""")
     return {
         "retrieval_details":{
             "rag_details" : []

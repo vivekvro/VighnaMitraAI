@@ -244,7 +244,7 @@ Options:
 """
     )
 
-def retrieval_router(state: ChatBotState):
+def retrieval_router_node(state: ChatBotState):
     parser=PydanticOutputParser(pydantic_object=Memory_Router_Condition)
     prompt = PromptTemplate(
         template="""You are a retrieval router.
@@ -293,11 +293,13 @@ Prefer `False` when uncertain.
             return_path.append("user_memories")
         if "uploaded_documents" in retrieval_type:
             return_path.append("uploaded_documents")
-        if len(return_path)==1:
-            state['retrieval_type']=return_path
-            return "need_retrieval"
-
-        state['retrieval_type']=return_path
-        return "need_retrieval"
+        return {
+            "retrieval_type":[types for types in return_path]
+            }
     else:
-        return "chat_node"
+        return {"retrieval_type":[]}
+
+def retrieval_router(state: ChatBotState):
+    if state['retrieval_type']:
+        return "need_retrieval"
+    return "chat_node"

@@ -198,7 +198,7 @@ elif sidebar_sections == "attach documents":
     if st.sidebar.button("Upload"):
 
         with st.sidebar.spinner("Uploading..."):
-                if doctype is not None:
+                if uploaded_file is not None:
                     try:
                         response = requests.post(
                             "http://backend:8005/upload",
@@ -280,7 +280,7 @@ def fake_stream_response(text:str):
         time.sleep(0.002)
 
 
-
+result_state = {}
 
 if user_input :
     with st.chat_message(name="user"):
@@ -296,7 +296,9 @@ if user_input :
                 }
             )
             data = response.json()
-            result_state = data['response']
+            
+            result_state["message"] = data['message']
+            result_state["trace"] = data["trace"]
         except Exception as e:
             result_state = {"message":str(e),"trace":['error']}
 

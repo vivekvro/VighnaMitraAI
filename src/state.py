@@ -12,7 +12,7 @@ class BaseChatState(TypedDict):
 
 class SummaryState(TypedDict):
     summary_content :Annotated[str,"Updated summary combining previous + new conversation chunk"]=None
-    summary_end_index: int = Field(default=0)
+    summary_end_index: int
 
 class UserDetails(TypedDict):
     user_id:str
@@ -28,6 +28,4 @@ class ChatBotState(BaseChatState):
     retrieval_type: List[Literal["uploaded_documents","user_memories"]]
     retriever_context_message:Optional[SystemMessage]
     user_details:UserDetails
-    trace:List[str]=Field(
-        default_factory=list,
-        description="in this add used tools and nodes.")
+    trace:List[str]

@@ -1,6 +1,6 @@
 services:
   postgres:
-    image: pgvector/pgvector:pg16 #old :postgres:16
+    image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -35,6 +35,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile.backend
+    command: uv run uvicorn src.routes:app --host 0.0.0.0 --port 8005
     ports:
       - "8005:8005"
     depends_on:
@@ -55,4 +56,4 @@ services:
 volumes:
   pgdata:
   ollama_data:
-    external: true 
+    external: true
