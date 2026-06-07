@@ -163,8 +163,8 @@ async def load_tempfile_path(upload_file:UploadFile):
 async def upload(file:UploadFile=File(...),thread_id:str=Form(...),user_id:str=Form(...)):
     try:
         file_type= MIME_TO_EXTENSION[file.content_type]
-        temp_fila_path = await load_tempfile_path(file)
-        loader = DocLoader(doctype=file_type,path=temp_fila_path)
+        temp_file_path = await load_tempfile_path(file)
+        loader = DocLoader(doctype=file_type,path=temp_file_path)
         docs = loader.load()
 
         if not docs:
@@ -175,5 +175,8 @@ async def upload(file:UploadFile=File(...),thread_id:str=Form(...),user_id:str=F
             return {"response":"something went wrong."}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            os.unlink(temp_file_path)
 
 

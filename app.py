@@ -140,8 +140,11 @@ if "chat_id"  not in  st.session_state["user"]:
 
 
 def is_chat_empty(thread_id:str):
-    response = requests.get(url=f"http://backend:8005/is_chat_empty?thread_id={thread_id}")
-    return response.json()['response']['is_empty']
+    try:
+        response = requests.get(url=f"http://backend:8005/is_chat_empty?thread_id={thread_id}")
+        return response.json()['response']['is_empty']
+    except:
+        return True
 
 
 
@@ -160,10 +163,11 @@ if st.sidebar.button("New chat"):
         st.rerun()
 
 
-
-response_threads = requests.get(url=f"http://backend:8005/thread_ids?user_id={username}")
-threads = response_threads.json()['response']['thread_ids']
-
+try:
+    response_threads = requests.get(url=f"http://backend:8005/thread_ids?user_id={username}")
+    threads = response_threads.json()['response']['thread_ids']
+except:
+    threads = []
 
 
 st.sidebar.markdown("---\ncurrent chat:")

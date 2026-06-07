@@ -31,19 +31,6 @@ services:
     env_file:
       - .env
 
-  backend:
-    build:
-      context: .
-      dockerfile: Dockerfile.backend
-    command: uv run uvicorn src.routes:app --host 0.0.0.0 --port 8005
-    ports:
-      - "8005:8005"
-    depends_on:
-      - postgres
-      - mcp-server
-    env_file:
-      - .env
-
   ollama:
     image: ollama/ollama
     container_name: ollama
@@ -52,7 +39,19 @@ services:
     volumes:
       - ollama_data:/root/.ollama   # reuse existing volume
     restart: always
-
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    command: uv run uvicorn src.routes:app --host 0.0.0.0 --port 8005
+    ports:
+      - "8005:8005"
+    depends_on:
+      - ollama
+      - postgres
+      - mcp-server
+    env_file:
+      - .env
 volumes:
   pgdata:
   ollama_data:

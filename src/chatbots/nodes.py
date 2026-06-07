@@ -18,7 +18,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_community.vectorstores import VectorStore
 from langchain_core.runnables import RunnableConfig
 # Local Project Imports
-from src.LLMs.load_llm import llama3_4b, gpt_oss_120b
+from src.LLMs.load_llm import gemma3_4b, gpt_oss_120b
 from src.state import ChatBotState
 from src.rag.retrievers import load_vectorstore,embedding,postgres_embed
 from src.configs.config_methods import load_config
@@ -26,9 +26,8 @@ from src.configs.config_methods import load_config
 
 dotenv.load_dotenv()
 DB_POSTGRESSTORE_PATH = os.getenv("DB_POSTGRES_URL")
-
 #----------------LLMs Setups -------------------------
-llm_summarizer = llama3_4b()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
+llm_summarizer = gemma3_4b()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
 llm = gpt_oss_120b()# i am using this for token size efficiency, but you can choose any capable model here, ideally the same one used for the main conversation to maintain consistency in response style and capabilities. Adjust based on your specific requirements and token limits.
 #-----------------------ToolNode------------------------------------
 
@@ -121,7 +120,7 @@ knowledge, available tools, and their personal context where appropriate.
 
 
 async def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str,num_docs:int,store: BaseStore):# This function retrieves basic memories from the vector store based on the provided namespace, filter type, search query, and number of documents to fetch. It constructs a search query using the specified parameters and retrieves relevant memories that match the filter type. The retrieved memories are then formatted into a string that can be included in the system message for initializing the conversation context.
-    items = await store.search(
+    items = await store.asearch(
         namespace,
         query=search_query,
         limit=num_docs,
@@ -925,9 +924,6 @@ async def get_document_summaries(
         for file_hash, summary in rows
     )
 
-
-
-
 async def retrieval_info_fetcher_node(state: ChatBotState,config: RunnableConfig):
     """
     Node that inspects the conversation and populates state with
@@ -1211,7 +1207,7 @@ If the retrieved memories seem unrelated or not useful, ignore them.
         summary output:
         """
         response = await llm_summarizer.ainvoke(prompt)
-        system_messages[-1] =SystemMessage(content=response.content)
+        system_messages[-1] = SystemMessage(content=response.content)
         return {
             "system_messages": system_messages
             }

@@ -7,10 +7,10 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.messages import HumanMessage, AIMessage
 # Local
 from src.state import ChatBotState
-from src.LLMs.load_llm import llama3_4b
+from src.LLMs.load_llm import gemma3_4b
 
 
-llm = llama3_4b()
+llm = gemma3_4b()
 
 #-------Memory_fetcher_condition------------
 
@@ -244,7 +244,7 @@ Options:
 """
     )
 
-def retrieval_router_node(state: ChatBotState):
+async def retrieval_router_node(state: ChatBotState):
     parser=PydanticOutputParser(pydantic_object=Memory_Router_Condition)
     prompt = PromptTemplate(
         template="""You are a retrieval router.
@@ -284,7 +284,7 @@ Prefer `False` when uncertain.
     }
     )
     chain = prompt | llm | parser
-    result = chain.invoke({"user_query":state['messages'][-1].content})
+    result = await chain.ainvoke({"user_query":state['messages'][-1].content})
 
     if result.requires_retrieval:
         return_path = []
