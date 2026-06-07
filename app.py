@@ -303,7 +303,7 @@ if user_input :
             result_state["message"] = data['response']['message']
             result_state["trace"] = data['response']['trace']
         except Exception as e:
-            result_state = {"message":str(e),"trace":['error']}
+            result_state = {"message":str(e),"trace":None}
 
     with st.chat_message(name="assistant"):
         if "trace" in result_state:
@@ -311,7 +311,7 @@ if user_input :
                 for step in result_state["trace"]:
                     st.write(step)
         st.write_stream(fake_stream_response(result_state['message']))
-        if "error" in result_state['trace']:
+        if result_state['trace'] is None:
             st.write("restarting..")
             for i in [5,4,3,2,1]:
                 st.write(i)

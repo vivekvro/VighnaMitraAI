@@ -30,15 +30,6 @@ services:
       - "8501:8501"
     env_file:
       - .env
-
-  ollama:
-    image: ollama/ollama
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama   # reuse existing volume
-    restart: always
   backend:
     build:
       context: .
@@ -47,9 +38,10 @@ services:
     ports:
       - "8005:8005"
     depends_on:
-      - ollama
       - postgres
       - mcp-server
+    volumes:
+      - ./images:/app/images
     env_file:
       - .env
 volumes:

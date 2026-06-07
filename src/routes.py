@@ -20,6 +20,9 @@ chatbot = None
 async def lifespan(app: FastAPI):
     global chatbot
     chatbot = await base_chatbot()
+    img_bytes = chatbot.get_graph().draw_mermaid_png()
+    with open("images/current-chatbot-graph.png","wb") as f:
+        f.write(img_bytes)
     print("Chatbot loaded!.")
     yield
     print("APP shutdown")

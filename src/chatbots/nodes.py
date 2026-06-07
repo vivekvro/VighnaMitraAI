@@ -18,7 +18,7 @@ from langchain_mcp_adapters.client import MultiServerMCPClient
 from langchain_community.vectorstores import VectorStore
 from langchain_core.runnables import RunnableConfig
 # Local Project Imports
-from src.LLMs.load_llm import gemma3_4b, gpt_oss_120b
+from src.LLMs.load_llm import llama_3_3_70b_versatile, gpt_oss_120b
 from src.state import ChatBotState
 from src.rag.retrievers import load_vectorstore,embedding,postgres_embed
 from src.configs.config_methods import load_config
@@ -27,7 +27,7 @@ from src.configs.config_methods import load_config
 dotenv.load_dotenv()
 DB_POSTGRESSTORE_PATH = os.getenv("DB_POSTGRES_URL")
 #----------------LLMs Setups -------------------------
-llm_summarizer = gemma3_4b()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
+llm_summarizer = llama_3_3_70b_versatile()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
 llm = gpt_oss_120b()# i am using this for token size efficiency, but you can choose any capable model here, ideally the same one used for the main conversation to maintain consistency in response style and capabilities. Adjust based on your specific requirements and token limits.
 #-----------------------ToolNode------------------------------------
 
@@ -98,7 +98,7 @@ User context and memories:
 - Integrate this context naturally into your responses without
   explicitly mentioning it (don't say "I remember you like X",
   just acknowledge it through your answer choices and framing)
-- Use these memories to personalise your approach, tone, and examples
+- Use these memories to personalize your approach, tone, and examples
 - Only reference user history when it's genuinely relevant to answering
   the current question
 
@@ -278,7 +278,7 @@ Write ONLY the summary — no labels, no preamble, no markdown.
 Make it dense and direct so it can be injected into an assistant's context.
 
 Memories (with dates):
-{total_memories}
+{total_memories[:6000]}
 """
     response = await llm_summarizer.ainvoke(prompt)
 
@@ -349,7 +349,9 @@ def tools_trace_node(state: ChatBotState):
         tool_names = [call['name'] for call in tool_calls]
         trace = update_trace(state,tool_names)
         return {"trace": trace}
-    return state
+    return {
+        "trace":state['trace']
+    }
 #------------------------ summary Nodes ---------------------------
 async def system_message_summarizer_node(state: ChatBotState):
     system_messages = state['system_messages']
@@ -361,7 +363,7 @@ async def system_message_summarizer_node(state: ChatBotState):
 Summarize the following system messages into a concise format that retains all important instructions, user details, and context.
 The summary should be clear and comprehensive while being as brief as possible.
 Focus on preserving critical information that guides the chatbot's behavior and responses.
-and ensure the final summary stays under 900–1100 tokens to allow room for future context and conversation history.
+and ensure the final summary stays under 700 words to allow room for future context and conversation history.
 remove any redundant, repetitive, or non-essential information while keeping the core instructions intact.
 just return the summary without any explanations or formatting.
 System Messages:
@@ -395,21 +397,19 @@ async def summarize_conversation(state: ChatBotState):
                 f"Existing summary:\n{existing_summary}\n\n"
                 "Update this summary using the new conversation above. "
                 "Keep it concise, and retain only important information relevant for future conversation context. "
-                "Ensure the final summary stays under 900–1000 tokens. "
+                "Ensure the final summary stays under 600-700 words "
                 "Avoid repetition and unnecessary details."
             )
         else:
             prompt = (
                 "Summarize the conversation above concisely. "
                 "Include only important information relevant for future conversation context. "
-                "Ensure the summary stays under 900–1000 tokens. "
+                "Ensure the summary stays under 600-700 words. "
                 "Avoid repetition and unnecessary details."
             )
 
         # use full conversation for summarization
-        messages_for_summary = chunk + [
-            SystemMessage(content=prompt)
-        ]
+        messages_for_summary =[SystemMessage(content=prompt)] + chunk
 
         response = await llm_summarizer.ainvoke(messages_for_summary)
 
@@ -514,17 +514,18 @@ async def remember_node(state: ChatBotState, store: BaseStore):# This node is re
 Return ONLY valid JSON.
 
 Schema:
+{format_instructions}
 
-{
+
+{{
   "need_to_remember": boolean,
   "new_memories": [
-    {
+    {{
       "memory": string,
       "memory_type": string
-    }
+    }}
   ]
-}
-
+}}
 CURRENT USER DETAILS:
 {existing_memory}
 
@@ -640,15 +641,15 @@ Consistency Rules
 
 Example
 
-{
+{{
   "need_to_remember": true,
   "new_memories": [
-    {
+    {{
       "memory": "User prefers short responses",
       "memory_type": "preferences"
-    }
+    }}
   ]
-}
+}}
 """,
     input_variables=["existing_memory", "human_msg"],
     partial_variables={
@@ -954,12 +955,10 @@ async def retrieval_info_fetcher_node(state: ChatBotState,config: RunnableConfig
         }}
     system_message  = state["system_messages"][0]
     retrieval_type = state['retrieval_type']
-    retrieval_scope = ""
-    if "uploaded_documents" in retrieval_type:
-        retrieval_scope = retrieval_scope + "- retrieve from uploaded documents"
-    if "user_memories" in retrieval_type:
-        retrieval_scope = retrieval_scope + "- retrieve from user memories"
-
+    retrieval_scope = "\n".join([
+        "- retrieve from uploaded documents" if "uploaded_documents" in retrieval_type else "",
+        "- retrieve from user memories" if "user_memories" in retrieval_type else ""
+        ]).strip()
     # ── LLM call ─────────────────────────────────────────────────────────────
     parser = PydanticOutputParser(pydantic_object=InfoFetcher_node)
 
@@ -1044,7 +1043,7 @@ Rules:
         "trace":update_trace(state,"Retrieval Decision stage 1")}
 
 #  docs
-async def rag_result(vector_store:VectorStore,search_query,top_k,search_type,source):# This function performs a retrieval-augmented generation (RAG) process by querying the vector store with the provided search query and parameters. It constructs the search parameters based on whether a specific source filter is applied, retrieves relevant documents using the retriever, and then uses the summarization LLM to analyze the retrieved content in relation to the user's query. The prompt instructs the model to determine if the retrieved information is relevant and useful for answering the query, and to provide a concise answer based solely on that information, or to indicate if no relevant information is available.
+async def rag_result(vector_store:VectorStore,user_msg,search_query,top_k,search_type,source):# This function performs a retrieval-augmented generation (RAG) process by querying the vector store with the provided search query and parameters. It constructs the search parameters based on whether a specific source filter is applied, retrieves relevant documents using the retriever, and then uses the summarization LLM to analyze the retrieved content in relation to the user's query. The prompt instructs the model to determine if the retrieved information is relevant and useful for answering the query, and to provide a concise answer based solely on that information, or to indicate if no relevant information is available.
     if source:
         search_kwargs={
             "k":top_k or 6,
@@ -1075,7 +1074,10 @@ Your task:
 "No information related to your query is available in the uploaded documents."
 
 User Query:
-{search_query}
+{user_msg}          ← original user message
+
+Retrieval Query Used:
+{search_query}       ← what was searched
 
 Retrieved Content:
 {retrieved_content}
@@ -1107,10 +1109,12 @@ async def retriever_node(state: ChatBotState,config:RunnableConfig):
     for query in query_list:
         result_rag = await rag_result(
             vector_store=vector_store,
+            user_msg=user_msg,
             search_type=query.retrieval_mode,
             search_query=query.search_query,
             source=query.filter_by_source,
-            top_k=query.num_docs)
+            top_k=query.num_docs
+            )
 
         query_list_result.append(f"""Query for RAG: {query.search_query}\nRAG response: {result_rag} \n source: {query.filter_by_source  if query.filter_by_source else "Not mentioned"}""")
 

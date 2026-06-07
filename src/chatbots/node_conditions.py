@@ -7,10 +7,10 @@ from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.messages import HumanMessage, AIMessage
 # Local
 from src.state import ChatBotState
-from src.LLMs.load_llm import gemma3_4b
+from src.LLMs.load_llm import llama_3_3_70b_versatile
 
 
-llm = gemma3_4b()
+llm = llama_3_3_70b_versatile()
 
 #-------Memory_fetcher_condition------------
 
