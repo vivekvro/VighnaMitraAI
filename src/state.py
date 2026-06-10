@@ -22,10 +22,14 @@ class Retrieval_schema(TypedDict):
     rag_details: List[Any]
     user_memories: List[Any]
 
+class Retrieval_scores(TypedDict):
+    retriever_score:float
+    memories_score:float
 class ChatBotState(BaseChatState):
     summary:SummaryState
     retrieval_details:Optional[Retrieval_schema]
     retrieval_type: List[Literal["uploaded_documents","user_memories"]]
+    retrieval_score:Retrieval_scores
     retriever_context_message:Optional[SystemMessage]
     user_details:UserDetails
     trace:List[str]

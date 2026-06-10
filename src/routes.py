@@ -49,6 +49,10 @@ async def post_chat_response(req:UserDetails):
             },
             "retrieval_type":[],
             "retriever_context_message": None,
+            "retrieval_score":{
+                "retriever_score":0.0,
+                "memories_score":0.0
+                },
             "retrieval_details": {
                 "user_msg":"",
                 "rag_details":[],

@@ -2,6 +2,7 @@
 import os, asyncio, datetime, dotenv
 from uuid import uuid4
 from psycopg import AsyncConnection
+from contextlib import asynccontextmanager
 
 
 from typing import List,Optional,Literal
@@ -29,34 +30,22 @@ DB_POSTGRESSTORE_PATH = os.getenv("DB_POSTGRES_URL")
 #----------------LLMs Setups -------------------------
 llm_summarizer = llama_3_3_70b_versatile()# you can choose any summarization-capable model here, ideally a smaller one for efficiency, since summarization doesn't require the full power of a 70b model. Adjust based on your specific needs and token limits.
 llm = gpt_oss_120b()# i am using this for token size efficiency, but you can choose any capable model here, ideally the same one used for the main conversation to maintain consistency in response style and capabilities. Adjust based on your specific requirements and token limits.
-#-----------------------ToolNode------------------------------------
+
+# tool setup
+
+@asynccontextmanager
+async def mcp_tools():
+    mcp_config = await load_config()
+    client = MultiServerMCPClient(mcp_config)
+    try:
+        tools = await client.get_tools()
+        yield tools
+    finally:
+        await client.aclose
 
 
-#get tools
-_tools_cache = None# global cache for tools to avoid redundant loading across nodes, since tool retrieval can be time-consuming and we want to ensure efficient access to the same set of tools throughout the conversation flow.
-_llm_with_tools = None# global variable to hold the LLM instance bound with tools, allowing us to reuse the same tool-enabled LLM across different nodes without needing to re-bind it multiple times, which can be inefficient. This ensures that once we initialize the LLM with tools, we can easily access it whenever needed in the conversation flow.
-_tool_node = None# global variable to hold the initialized ToolNode instance, allowing us to reuse the same node across different parts of the conversation flow without needing to re-initialize it multiple times. This ensures that once we set up the ToolNode with the retrieved tools, we can easily access it whenever we need to invoke tool-related actions in the conversation.
-
-async def initialize_mcp_tools():# This function initializes the tools from the MCP client and binds them to the LLM. It uses global variables to cache the tools, the LLM with tools, and the ToolNode instance, ensuring that we only load and bind the tools once per conversation session for efficiency. If the tools are already cached, it simply returns the existing LLM with tools and ToolNode instance.
-    global _tools_cache, _llm_with_tools, _tool_node
-
-    if _tools_cache is None:
-        mcp_config = await load_config()
 
 
-
-        client = MultiServerMCPClient(mcp_config)
-
-        _tools_cache = await asyncio.wait_for(
-            client.get_tools(),
-            timeout=20
-        )
-
-        _llm_with_tools = llm.bind_tools(_tools_cache)
-
-        _tool_node = ToolNode(tools=_tools_cache)
-
-    return _llm_with_tools, _tool_node
 
 
 #------------------- trace  ---------------------
@@ -302,9 +291,7 @@ async def chat_node(state: ChatBotState):
     last_summarized_index = state['summary']['summary_end_index']
     last_messages = state['messages'][last_summarized_index:]
     system_messages = state['system_messages']
-
-    
-
+    user_memories = state["user_details"]["user_memory"]
     messages = []
 
     # system
@@ -319,7 +306,31 @@ async def chat_node(state: ChatBotState):
 
     if state["retriever_context_message"]:
         context_message = state["retriever_context_message"]
-        response = await llm.ainvoke(messages + [context_message])
+        retriever_prompt = SystemMessage(content="""You are a retrieval consolidation system.
+
+You are given:
+1. The user's original query
+2. Multiple RAG retrieval results generated from uploaded documents
+
+Your task:
+- Analyze all retrieval results together
+- Identify useful, relevant, and non-contradictory information
+- Combine related information into a single coherent response
+- Ignore duplicate, noisy, weakly related, or irrelevant retrieval outputs
+- Prefer information that directly answers the user's query
+- Keep the final response concise but complete
+
+Important Rules:
+- Use ONLY information present in the RAG results
+- Do NOT invent or assume missing information
+- Do NOT mention retrieval systems, chunks, embeddings, or vector stores
+- Do NOT mention which query retrieved which information
+- If multiple retrievals contain overlapping information, merge them naturally
+- If ALL retrieval results indicate missing/unrelated information, return exactly:
+
+"No information related to your query is available in the uploaded documents."
+""")
+        response = await llm.ainvoke(messages + [retriever_prompt + context_message])
         return {
         "messages": [response],
         "retrieval_type":[],
@@ -334,8 +345,8 @@ async def chat_node(state: ChatBotState):
 
     
 
-
-    llm_with_tools, _ = await initialize_mcp_tools()
+    async with mcp_tools() as tools:
+        llm_with_tools = llm.bind_tools(tools)
     response = await llm_with_tools.ainvoke(messages)
 
     return {
@@ -1120,29 +1131,6 @@ async def retriever_node(state: ChatBotState,config:RunnableConfig):
 
     total_results = "\n\n".join(query_list_result)
     retriever_context_message = SystemMessage(content=f"""
-You are a retrieval consolidation system.
-
-You are given:
-1. The user's original query
-2. Multiple RAG retrieval results generated from uploaded documents
-
-Your task:
-- Analyze all retrieval results together
-- Identify useful, relevant, and non-contradictory information
-- Combine related information into a single coherent response
-- Ignore duplicate, noisy, weakly related, or irrelevant retrieval outputs
-- Prefer information that directly answers the user's query
-- Keep the final response concise but complete
-
-Important Rules:
-- Use ONLY information present in the RAG results
-- Do NOT invent or assume missing information
-- Do NOT mention retrieval systems, chunks, embeddings, or vector stores
-- Do NOT mention which query retrieved which information
-- If multiple retrievals contain overlapping information, merge them naturally
-- If ALL retrieval results indicate missing/unrelated information, return exactly:
-
-"No information related to your query is available in the uploaded documents."
 
 User Original Query:
 {user_msg}
@@ -1164,7 +1152,11 @@ async def retrieve_user_memory_node(state: ChatBotState, store: BaseStore): # Th
     query_list = state["retrieval_details"]['user_memories']
     if not query_list:
         return {
-        "system_messages": state['system_messages']
+        {
+        "user_details": {
+            "user_memory": None
+        }
+    }
     }
     main_query = state['retrieval_details']['user_msg']
     user_id = state['user_details']['user_id']
@@ -1192,9 +1184,8 @@ Retrieved memories:
 Use these memories only if they are helpful and relevant for answering the user query.
 If the retrieved memories seem unrelated or not useful, ignore them.
 """
-    system_messages = state['system_messages']
-    if len(system_messages)>1:
-        old_memories = system_messages[-1].content
+    if state['user_details']["user_memory"] is not None:
+        old_memories = state["user_details"]['user_memory']
         new_memories = result_message
         prompt = f"""Your work is to summarize the old and new memories system message.
         rule:
@@ -1211,9 +1202,10 @@ If the retrieved memories seem unrelated or not useful, ignore them.
         summary output:
         """
         response = await llm_summarizer.ainvoke(prompt)
-        system_messages[-1] = SystemMessage(content=response.content)
         return {
-            "system_messages": system_messages
+            "user_details": {
+            "user_memory": response.content
+            }
             }
 
     if len(result_message) > 800:
@@ -1243,5 +1235,102 @@ Memories:
 
     update_system_msg = state["system_messages"]+[SystemMessage(content=memory_message)]
     return {
-        "system_messages": update_system_msg
+        "user_details": {
+            "user_memory": memory_message
+        }
+    }
+
+class Evaluate_Retrieval_Content(BaseModel):
+    retriever_score:float = Field(
+        description=(
+            "Score the quality and relevance of the retrieved RAG documents "
+            "for answering the user's query. Higher scores indicate the "
+            "retrieved documents are highly relevant, complete, accurate, and "
+            "sufficient to answer the query. Lower scores indicate the "
+            "documents are irrelevant, incomplete, outdated, or missing key information. "
+            "Return a value between 0 and 100."
+            "0-20: Irrelevant or unusable. "
+            "21-40: Mostly irrelevant with little useful information. "
+            "41-60: Partially relevant but incomplete. "
+            "61-80: Relevant and useful with minor gaps. "
+            "81-100: Highly relevant, accurate, and sufficient."
+        )
+        ,default=0.0
+        ,ge=0.0,
+        le=100.0
+        )
+    memories_score:float = Field(description=(
+            "Score the quality and usefulness of the retrieved memories for "
+            "answering the user's query. Higher scores indicate the memories "
+            "are highly relevant, accurate, personalized, and helpful. "
+            "Lower scores indicate the memories are irrelevant, outdated, "
+            "contradictory, or provide little value for the current query. "
+            "Return a value between 0 and 100."
+            "0-20: Irrelevant or unusable. "
+            "21-40: Mostly irrelevant with little useful information. "
+            "41-60: Partially relevant but incomplete. "
+            "61-80: Relevant and useful with minor gaps. "
+            "81-100: Highly relevant, accurate, and sufficient."
+        ),default=0.0,ge=0.0,le=100.0)
+async def retrieval_evaluation_node(state: ChatBotState):
+    retriever_content = f"retriever content :\n{state['retriever_context_message'].content}" if state['retriever_context_message'] else "no retriever is used so keep retriever_score : 0.0"
+    user_memories_content = f"fetched User Memories:\n{state['system_messages'][1].content}" if len(state['system_messages']) >1 else "Memories fetcher is not used so keep memories_score : 0.0"
+    parser = PydanticOutputParser(pydantic_object=Evaluate_Retrieval_Content)
+    prompt = PromptTemplate(
+        template="""You are an expert retrieval evaluator.
+{format_instructions}
+Your task is to evaluate the quality of the retrieved RAG documents and retrieved memories for answering the user's query.
+
+{retriever_content}
+
+{user_memories_content}
+
+Evaluate both retrieval sources independently.
+
+Scoring Guidelines:
+
+RAG Score (0-100):
+
+* 0-20: Documents are irrelevant or unusable.
+* 21-40: Mostly irrelevant with little useful information.
+* 41-60: Partially relevant but incomplete.
+* 61-80: Relevant and useful with minor gaps.
+* 81-100: Highly relevant, accurate, complete, and sufficient to answer the query.
+
+Memories Score (0-100):
+
+* 0-20: Memories are irrelevant or incorrect.
+* 21-40: Memories have little value for the current query.
+* 41-60: Some memories are useful but important context is missing.
+* 61-80: Memories are relevant and provide meaningful personalization.
+* 81-100: Memories are highly relevant, accurate, and significantly improve the response quality.
+
+Consider:
+
+1. Relevance to the user's query.
+2. Completeness of the information.
+3. Accuracy and consistency.
+4. Whether the retrieved information would help generate a better answer.
+5. Whether important information appears to be missing.
+
+Return only the structured output.
+""",
+    input_variables=['retriever_content','user_memories_content'],
+    partial_variables={'format_instructions':parser.get_format_instructions()}
+    )
+    chain = prompt | llm | parser
+    result:Evaluate_Retrieval_Content = await chain.ainvoke(
+        {
+            "retriever_content":retriever_content,
+            "user_memories_content":user_memories_content
+        }
+    )
+    retriever_score = result.retriever_score if result.retriever_score else 0.0
+    memories_score = result.memories_score if result.memories_score else 0.0
+    return {
+        "retrieval_score":{
+            "retriever_score":retriever_score,
+            "memories_score":memories_score
+        }
+
     }
