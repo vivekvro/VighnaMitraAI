@@ -10,9 +10,6 @@ embedding = HuggingFaceEmbeddings(
     model_kwargs={"device": "cpu"},
     encode_kwargs={"normalize_embeddings": True}
     )
-
-
-
 async def postgres_embed(texts: list[str]) -> list[list[float]]:
     """
     True async wrapper around the blocking HuggingFaceEmbeddings.
@@ -25,22 +22,16 @@ async def postgres_embed(texts: list[str]) -> list[list[float]]:
         embedding.embed_documents,   # the blocking sync method
         texts                        # argument to that method
     )
-
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
 VECTORSTORE_DIR_PATH = BASE_DIR / "data" / "vectorstore"
-
-
 def get_vectorstore_path(user_id: str,thread_id:str):
     return VECTORSTORE_DIR_PATH / user_id /thread_id
-
-
 def create_vectorstore(user_id: str, docs,thread_id:str):
     path = get_vectorstore_path(user_id=user_id,thread_id=thread_id)
 
     vectorstore = FAISS.from_documents(docs, embedding=embedding)
     vectorstore.save_local(str(path))
     return vectorstore
-
 
 def load_vectorstore(user_id: str,thread_id:str):
     path = get_vectorstore_path(user_id=user_id,thread_id=thread_id)

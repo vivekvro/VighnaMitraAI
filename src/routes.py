@@ -81,7 +81,9 @@ async def post_chat_response(req:UserDetails):
 @app.get("/chat/history")
 async def get_history_messages(thread_id:str):
     try:
-        state = await chatbot.aget_state(config={"configurable":{"thread_id":thread_id}})
+        state = await chatbot.aget_state(config={
+            "configurable":{"thread_id":thread_id
+                            }})
         messages =  state.values.get("messages",[])
         returnable_messages = []
         for msg in messages:
@@ -162,24 +164,19 @@ MIME_TO_EXTENSION = {
 }
 
 async def load_tempfile_path(upload_file:UploadFile):
-    with tempfile.NamedTemporaryFile(delete=False,suffix=f"_{upload_file.filename}") as tmpfile:
+    with tempfile.NamedTemporaryFile(
+        delete=False,suffix=f"_{upload_file.filename}"
+        ) as tmpfile:
         tmpfile.write(await upload_file.read())
         return tmpfile.name
 
 @app.post("/upload")
-async def upload(file:UploadFile=File(...),thread_id:str=Form(...),user_id:str=Form(...)):
+async def upload(file: UploadFile = File(...), thread_id: str = Form(...), user_id: str = Form(...)):
+    temp_file_path = None
     try:
-        file_type= MIME_TO_EXTENSION[file.content_type]
+        file_type = MIME_TO_EXTENSION[file.content_type]
         temp_file_path = await load_tempfile_path(file)
-        loader = DocLoader(doctype=file_type,path=temp_file_path)
-        docs = loader.load()
-
-        if not docs:
-            raise HTTPException(status_code=500,detail="NO document is loaded")
-        if update_vectorstore(docs=docs,user_id=user_id,thread_id=thread_id):
-            return {"response":"Uploaded Successfully"}
-        else:
-            return {"response":"something went wrong."}
+        ...
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:

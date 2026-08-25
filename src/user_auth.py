@@ -12,7 +12,6 @@ DB_PATH = os.getenv('DB_POSTGRES_URL')
 
 
 # validate
-
 def validate_password(pw):
     if len(pw) < 8:
         return False
@@ -26,19 +25,13 @@ def validate_password(pw):
         return False
     return True
 
-
-
 # fetch
-
-
 def fetch_password_by_username(username:str):
     with psycopg.connect(DB_PATH) as con:
         cur = con.cursor()
         cur.execute( "SELECT password FROM accounts_info WHERE username = %s",(username,))
         row = cur.fetchone()
     return row[0] if row else None
-
-
 #------------------------ check if Xyz exists-----------------
 def check_if_user_exists(username:str):
     with psycopg.connect(DB_PATH) as con:
@@ -53,10 +46,7 @@ def check_if_email_exists(email:str):
         cur.execute("SELECT email from accounts_info where email = %s",(email,))
         row = cur.fetchone()
     return row is not None
-
-
 #------------------------ Signup -------------------------------
-
 def insert_account_info(username:str,password:str,dob:str,email:str):
     if not all([username,password,dob,email]):
         raise ValueError(dedent("All the fields are required"))
@@ -72,10 +62,6 @@ def insert_account_info(username:str,password:str,dob:str,email:str):
             con.commit()
     except psycopg.IntegrityError:
         raise ValueError("username or email already exists")
-
-
-
-
 #------------------------ Login-------------------------------
 def login_account(username:str,password:str):
     if not username or  not password:

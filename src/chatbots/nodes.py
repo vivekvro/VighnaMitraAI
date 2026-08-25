@@ -3,8 +3,6 @@ import os, asyncio, datetime, dotenv
 from uuid import uuid4
 from psycopg import AsyncConnection
 from contextlib import asynccontextmanager
-
-
 from typing import List,Optional,Literal
 # Third-party Libraries
 from pydantic import BaseModel, Field
@@ -105,9 +103,6 @@ knowledge, available tools, and their personal context where appropriate.
     User memory:
     {user_details_content}
 """
-
-
-
 async def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str,num_docs:int,store: BaseStore):# This function retrieves basic memories from the vector store based on the provided namespace, filter type, search query, and number of documents to fetch. It constructs a search query using the specified parameters and retrieves relevant memories that match the filter type. The retrieved memories are then formatted into a string that can be included in the system message for initializing the conversation context.
     items = await store.asearch(
         namespace,
@@ -119,7 +114,6 @@ async def get_BasicMemories(namespace: tuple,filter_by_type:str,search_query:str
     fetch_data = "\n".join([f"- {mem.value['data']} date: {mem.value['date']}" for mem in items  ])if items else "(No Memory exist)"
     return f"({filter_by_type})\n" +fetch_data
 
-
 async def init_SystemMessage(state: ChatBotState, store: BaseStore):
     # Initialize the system message with basic user information,
     # relevant memories, and core behavioral instructions for the LLM
@@ -128,97 +122,46 @@ async def init_SystemMessage(state: ChatBotState, store: BaseStore):
 
     if state['system_messages']:
         return state
-    
     namespace = ("user",user_id,"details")
     memory_queries = {
         "personal": [
         "What is the user's name?",
         "What basic personal details are known about the user?"
     ],
-
     "habit": [
         "What are the user's daily habits or routines?",
         "What recurring behaviors does the user follow?",
         "What productivity or study habits does the user have?"
     ],
-
     "interests": [
         "What topics is the user interested in?",
         "What technologies or fields does the user enjoy learning?"
     ],
-
     "goals": [
         "What are the user's current goals?",
         "What career or learning goals does the user have?",
         "What is the user trying to achieve?"
     ],
-
     "skills": [
         "What skills does the user already have?",
         "What technical skills is the user learning?",
         "What tools or technologies is the user skilled in?"
     ],
-
     "dislikes": [
         "What does the user dislike?",
         "What types of responses or behaviors does the user prefer to avoid?",
         "What recommendations should not be repeated?"
     ],
-
     "preferences": [
         "What communication preferences does the user have?",
         "What response style does the user prefer?",
         "What formatting or explanation preferences does the user have?"
     ],
-
     "learning_style": [
         "How does the user prefer to learn?",
         "Does the user prefer hints, examples, or direct answers?",
         "What teaching style works best for the user?"
     ],
-
-    "projects": [
-        "What projects is the user currently working on?",
-        "What ongoing technical or academic projects does the user have?",
-        "What project context is important to remember?"
-    ],
-
-    "tools": [
-        "What tools, frameworks, or libraries does the user use?"
-    ],
-
-    "constraints": [
-        "What limitations or constraints does the user have?"
-    ],
-
-    "knowledge_level": [
-        "What is the user's current knowledge level?"
-    ],
-
-    "career": [
-        "What career path is the user pursuing?"
-    ],
-
-    "education": [
-        "What is the user's educational background?"
-    ],
-
-    "behavior": [
-        "What behavioral patterns are known about the user?"
-    ],
-
-    "decisions": [
-        "What important decisions has the user already made?"
-    ],
-
-    "context": [
-        "What ongoing context should be remembered about the user?",
-    ],
-
-    "health": [
-        "Are there any health-related preferences or limitations mentioned by the user?",
-
-    ]
 }
     all_memories = []
 
@@ -523,11 +466,8 @@ async def remember_node(state: ChatBotState, store: BaseStore):# This node is re
     prompt_template = PromptTemplate(
     template="""
 Return ONLY valid JSON.
-
 Schema:
 {format_instructions}
-
-
 {{
   "need_to_remember": boolean,
   "new_memories": [
@@ -539,24 +479,15 @@ Schema:
 }}
 CURRENT USER DETAILS:
 {existing_memory}
-
 LAST CHAT:
 {human_msg}
-
 ---
-
 Goal
-
 Decide whether the LAST CHAT contains NEW long-term information that should be added to memory.
-
 Only store information that is likely to improve future conversations.
-
 ---
-
 Decision Rules
-
 Set "need_to_remember" = true ONLY when the chat contains NEW and REUSABLE information such as:
-
 - Preferences
 - Long-term goals
 - Identity/background
@@ -568,9 +499,7 @@ Set "need_to_remember" = true ONLY when the chat contains NEW and REUSABLE infor
 - Career or education information
 - Persistent interests
 - Important decisions that affect future interactions
-
 Set "need_to_remember" = false when the message is:
-
 - Casual conversation
 - Greetings
 - Small talk
@@ -582,20 +511,13 @@ Set "need_to_remember" = false when the message is:
 - Explanations
 - Requests for information
 - Problem-solving discussions that do not reveal reusable user information
-
----
-
 Memory Extraction Rules
-
 Extract ONLY information that:
-
 1. Is NEW (not already present in CURRENT USER DETAILS)
 2. Is useful in future conversations
 3. Is likely to remain true for weeks or months
 4. Helps personalize future responses
-
 Do NOT extract:
-
 - Normal conversation content
 - Temporary plans
 - Single-session context
@@ -604,19 +526,14 @@ Do NOT extract:
 - Assistant responses
 - Speculation or assumptions
 - Information already present in CURRENT USER DETAILS
-
 Each memory must be:
-
 - Atomic (one fact only)
 - Short
 - Self-contained
 - Normalized
 - Written from the user's perspective
-
 ---
-
 Allowed memory_type values
-
 personal
 habit
 interests
@@ -635,23 +552,16 @@ behavior
 decisions
 context
 health
-
 Use EXACTLY ONE memory_type per memory.
-
 ---
-
 Consistency Rules
-
 - If need_to_remember = false, new_memories MUST be []
 - If need_to_remember = true, new_memories MUST contain at least one item
 - Never create duplicate memories
 - Never combine multiple facts into one memory
 - Never invent information
-
 ---
-
 Example
-
 {{
   "need_to_remember": true,
   "new_memories": [
@@ -1152,12 +1062,10 @@ async def retrieve_user_memory_node(state: ChatBotState, store: BaseStore): # Th
     query_list = state["retrieval_details"]['user_memories']
     if not query_list:
         return {
-        {
-        "user_details": {
-            "user_memory": None
+            "user_details": {
+                "user_memory": None
+            }
         }
-    }
-    }
     main_query = state['retrieval_details']['user_msg']
     user_id = state['user_details']['user_id']
     namespace = ("user", user_id, "details")

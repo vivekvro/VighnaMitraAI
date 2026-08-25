@@ -1,16 +1,12 @@
-# Standard
+# imports
 import re
 import time
 import datetime as dt
 from uuid import uuid4
-
-
-# Third-party
 import requests
 import streamlit as st
 from dotenv import load_dotenv
 
-# Local
 from src.encrypt import ComparePasswords
 from src.user_auth import (
     insert_account_info,
@@ -81,10 +77,13 @@ if "user" not in st.session_state:
                 if check_if_email_exists(email):
                     st.error("Email already exists!")
                     st.stop()
-                
-                
                 if not validate_password(pw=password):
-                    st.error("Password must contain:\n- Minimum 8 characters\n- At least 1 uppercase letter (A-Z)\n- At least 1 lowercase letter (a-z)\n- At least 1 number (0-9)\n- At least 1 special character (!@#$%^&*)")
+                    st.error("""Password must contain:
+                    - Minimum 8 characters
+                    - At least 1 uppercase letter (A-Z)
+                    - At least 1 lowercase letter (a-z)
+                    - At least 1 number (0-9)
+                    - At least 1 special character (!@#$%^&*)""")
                     st.stop()
                 confirm_passwords(password,confirm_password)
                 insert_account_info(username=username,password=password,email=email,dob=dob)
@@ -92,15 +91,9 @@ if "user" not in st.session_state:
                 st.session_state['user']={"username":username.lower().strip()}
                 st.rerun()
 
-
-
             except ValueError as e:
                 st.error(e)
                 st.stop()
-                
-            
-            
-
     elif entrypoint == "Existing User":
         st.subheader("Welcome Back :-)")
         username = st.text_input("Username")
@@ -127,12 +120,6 @@ if "user" not in st.session_state:
                 
             
     st.stop()
-
-
-
-
-
-
 username = st.session_state['user']['username']
 
 if "chat_id"  not in  st.session_state["user"]:
@@ -145,9 +132,7 @@ def is_chat_empty(thread_id:str):
         return response.json()['response']['is_empty']
     except:
         return True
-
-
-
+    
 st.sidebar.title("Vighna Mitra Ai")
 st.sidebar.markdown("---")
 st.sidebar.header(f"Username: {username}")
@@ -162,13 +147,11 @@ if st.sidebar.button("New chat"):
         st.session_state["user"]["chat_id"] = f"{username}_{str(uuid4())}"
         st.rerun()
 
-
 try:
     response_threads = requests.get(url=f"http://backend:8005/thread_ids?user_id={username}")
     threads = response_threads.json()['response']['thread_ids']
 except:
     threads = []
-
 
 st.sidebar.markdown("---\ncurrent chat:")
 st.sidebar.button(st.session_state["user"]["chat_id"],width=200)
@@ -187,8 +170,6 @@ elif sidebar_sections == "attach documents":
     doctype = st.sidebar.selectbox(
         "select document type", ["pdf", "txt"], width=200
     )
-
-   
     if doctype in ["pdf", "txt"]:
         temp_path = None
         uploaded_file = st.sidebar.file_uploader(
@@ -216,16 +197,10 @@ elif sidebar_sections == "attach documents":
                             data={
                                 "thread_id":st.session_state['user']['chat_id'] ,
                                 "user_id": username
-                            }
-
-
-    )
+                            })
                         st.sidebar.write(response.json())
                     except Exception as e:
-                        st.sidebar.error()
-
-
-
+                        st.sidebar.error(str(e))
 
 elif sidebar_sections == "connectors":
     connectors_type = st.sidebar.selectbox("select MCP Server  type :",["online","local"])
@@ -245,10 +220,6 @@ elif sidebar_sections == "connectors":
                 time.sleep(10)
                 st.sidebar.success("Still you need to wait.")
 
-
-
-
-
 st.sidebar.markdown("---")
 if st.sidebar.button("logout"):
     if "user" in st.session_state:
@@ -261,7 +232,8 @@ config = {"configurable":{
         }
     }
 try:
-    response_messages = requests.get(url=f"http://backend:8005/chat/history?thread_id={st.session_state['user']['chat_id']}")
+    response_messages = requests.get(
+        url=f"http://backend:8005/chat/history?thread_id={st.session_state['user']['chat_id']}")
     if response_messages.status_code == 200:
         messages = response_messages.json()['response']['messages']
     else:
@@ -275,8 +247,6 @@ if messages:
                 st.write(msg['content'])
 
 user_input = st.chat_input("Ask Anything")
-
-
 
 def fake_stream_response(text:str):
     for char in text:

@@ -1,10 +1,6 @@
 from typing import Literal
 from langchain_community.document_loaders import WebBaseLoader,PyMuPDFLoader,TextLoader
 from langchain_text_splitters import RecursiveCharacterTextSplitter
-
-
-
-
 class DocLoader:
     def __init__(
             self,
