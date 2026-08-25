@@ -3,7 +3,7 @@ from langchain_ollama import ChatOllama
 from dotenv import load_dotenv
 def llama_3_3_70b_versatile(temperature=0.7):
     load_dotenv()
-    return ChatGroq(model="llama-3.3-70b-versatile" ,temperature=temperature)
+    return ChatGroq(model="openai/gpt-oss-120b" ,temperature=temperature)
 def gpt_oss_120b(temperature=0.7):
     load_dotenv()
     return ChatGroq(model="openai/gpt-oss-120b",temperature=temperature)

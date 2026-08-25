@@ -281,9 +281,16 @@ if user_input :
                 for step in result_state["trace"]:
                     st.write(step)
         st.write_stream(fake_stream_response(result_state['message']))
-        if result_state['trace'] is None:
-            st.write("restarting..")
-            for i in [5,4,3,2,1]:
-                st.write(i)
-                time.sleep(1)
-            st.rerun()
+        if "error_retry_count" not in st.session_state:
+            st.session_state["error_retry_count"] = 0
+
+        if result_state.get("trace") is None:
+            if st.session_state["error_retry_count"] < 3:
+                st.session_state["error_retry_count"] += 1
+                st.error(f"Something went wrong: {result_state['message']}")
+                time.sleep(2)
+                st.rerun()
+            else:
+                st.error("Backend unreachable after multiple attempts. Please refresh and try again.")
+        else:
+            st.session_state["error_retry_count"] = 0

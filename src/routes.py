@@ -73,6 +73,8 @@ async def post_chat_response(req:UserDetails):
                 }
             }
     except Exception as e:
+        import traceback
+        traceback.print_exc()
         raise HTTPException(
             status_code=500,
             detail=str(e)
@@ -176,11 +178,20 @@ async def upload(file: UploadFile = File(...), thread_id: str = Form(...), user_
     try:
         file_type = MIME_TO_EXTENSION[file.content_type]
         temp_file_path = await load_tempfile_path(file)
-        ...
+
+        loader = DocLoader(doctype=file_type, path=temp_file_path)
+        docs = loader.load()
+
+        if not docs:
+            raise HTTPException(status_code=500, detail="NO document is loaded")
+
+        if update_vectorstore(docs=docs, user_id=user_id, thread_id=thread_id):
+            return {"response": "Uploaded Successfully"}
+        else:
+            return {"response": "something went wrong."}
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
     finally:
         if temp_file_path and os.path.exists(temp_file_path):
             os.unlink(temp_file_path)
-
-
