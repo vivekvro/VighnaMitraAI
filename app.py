@@ -276,7 +276,7 @@ if user_input :
             result_state = {"message":str(e),"trace":None}
 
     with st.chat_message(name="assistant"):
-        if "trace" in result_state:
+        if result_state.get("trace"):
             with st.expander("⚙️ Execution Trace"):
                 for step in result_state["trace"]:
                     st.write(step)

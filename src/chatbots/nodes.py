@@ -35,12 +35,8 @@ llm = gpt_oss_120b()# i am using this for token size efficiency, but you can cho
 async def mcp_tools():
     mcp_config = await load_config()
     client = MultiServerMCPClient(mcp_config)
-    try:
-        tools = await client.get_tools()
-        yield tools
-    finally:
-        await client.aclose
-
+    tools = await client.get_tools()
+    yield tools
 
 
 
